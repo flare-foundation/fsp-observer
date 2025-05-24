@@ -6,15 +6,11 @@ from eth_account._utils.signing import to_standard_v
 from eth_keys.datatypes import Signature as EthSignature
 from py_flare_common.fsp.epoch.epoch import RewardEpoch
 from py_flare_common.fsp.messaging import (
-    parse_generic_tx,
     parse_submit1_tx,
     parse_submit2_tx,
     parse_submit_signature_tx,
 )
-from py_flare_common.fsp.messaging.byte_parser import ByteParser
-from py_flare_common.fsp.messaging.types import ParsedPayload
 from py_flare_common.fsp.messaging.types import Signature as SSignature
-from py_flare_common.ftso.commit import commit_hash
 from web3 import AsyncWeb3
 from web3._utils.events import get_event_data
 from web3.middleware import ExtraDataToPOAMiddleware
@@ -23,7 +19,6 @@ from configuration.types import (
     Configuration,
 )
 from observer.reward_epoch_manager import (
-    Entity,
     SigningPolicy,
 )
 from observer.types import (
@@ -36,11 +31,11 @@ from observer.types import (
     VoterRegistrationInfo,
     VoterRemoved,
 )
+from observer.validation.validation import validate_round
 
 from .message import Message, MessageLevel
 from .notification import notify_discord, notify_generic, notify_slack, notify_telegram
 from .voting_round import (
-    VotingRound,
     VotingRoundManager,
     WTxData,
 )
@@ -182,280 +177,22 @@ async def get_signing_policy_events(
     return builder.build()
 
 
-def log_issue(config: Configuration, issue: Message):
-    LOGGER.log(issue.level.value, issue.message)
+def log_message(config: Configuration, message: Message):
+    LOGGER.log(message.level.value, message.message)
 
     n = config.notification
 
     if n.discord is not None:
-        notify_discord(n.discord, issue.level.name + " " + issue.message)
+        notify_discord(n.discord, message.level.name + " " + message.message)
 
     if n.slack is not None:
-        notify_slack(n.slack, issue.level.name + " " + issue.message)
+        notify_slack(n.slack, message.level.name + " " + message.message)
 
     if n.telegram is not None:
-        notify_telegram(n.telegram, issue.level.name + " " + issue.message)
+        notify_telegram(n.telegram, message.level.name + " " + message.message)
 
     if n.generic is not None:
-        notify_generic(n.generic, issue)
-
-
-def extract[T](
-    payloads: list[tuple[ParsedPayload[T], WTxData]],
-    round: int,
-    time_range: range,
-) -> tuple[ParsedPayload[T], WTxData] | None:
-    if not payloads:
-        return
-
-    latest: tuple[ParsedPayload[T], WTxData] | None = None
-
-    for pl, wtx in payloads:
-        if pl.voting_round_id != round:
-            continue
-        if not (time_range.start <= wtx.timestamp < time_range.stop):
-            continue
-
-        if latest is None or wtx.timestamp > latest[1].timestamp:
-            latest = (pl, wtx)
-
-    return latest
-
-
-def validate_ftso(round: VotingRound, entity: Entity, config: Configuration):
-    mb = Message.builder().add(
-        network=config.chain_id,
-        round=round.voting_epoch,
-        protocol=100,
-    )
-
-    epoch = round.voting_epoch
-    ftso = round.ftso
-    finalization = ftso.finalization
-
-    _submit1 = ftso.submit_1.by_identity[entity.identity_address]
-    submit_1 = _submit1.extract_latest(range(epoch.start_s, epoch.end_s))
-
-    _submit2 = ftso.submit_2.by_identity[entity.identity_address]
-    submit_2 = _submit2.extract_latest(
-        range(epoch.next.start_s, epoch.next.reveal_deadline())
-    )
-
-    sig_grace = max(
-        epoch.next.start_s + 55 + 1, (finalization and finalization.timestamp + 1) or 0
-    )
-    _submit_sig = ftso.submit_signatures.by_identity[entity.identity_address]
-    submit_sig = _submit_sig.extract_latest(
-        range(epoch.next.reveal_deadline(), sig_grace)
-    )
-
-    # TODO:(matej) check for transactions that happened too late (or too early)
-
-    issues = []
-
-    s1 = submit_1 is not None
-    s2 = submit_2 is not None
-    ss = submit_sig is not None
-
-    if not s1:
-        issues.append(mb.build(MessageLevel.INFO, "no submit1 transaction"))
-
-    if s1 and not s2:
-        issues.append(
-            mb.build(
-                MessageLevel.CRITICAL, "no submit2 transaction, causing reveal offence"
-            )
-        )
-
-    if s2:
-        indices = [
-            str(i)
-            for i, v in enumerate(submit_2.parsed_payload.payload.values)
-            if v is None
-        ]
-
-        if indices:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    f"submit 2 had 'None' on indices {', '.join(indices)}",
-                )
-            )
-
-    if s1 and s2:
-        # TODO:(matej) should just build back from parsed message
-        bp = ByteParser(parse_generic_tx(submit_2.wtx_data.input).ftso.payload)
-        rnd = bp.uint256()
-        feed_v = bp.drain()
-
-        hashed = commit_hash(entity.submit_address, epoch.id, rnd, feed_v)
-
-        if submit_1.parsed_payload.payload.commit_hash.hex() != hashed:
-            issues.append(
-                mb.build(
-                    MessageLevel.CRITICAL,
-                    "commit hash and reveal didn't match, causing reveal offence",
-                ),
-            )
-
-    if not ss:
-        issues.append(
-            mb.build(MessageLevel.ERROR, "no submit signatures transaction"),
-        )
-
-    if finalization and ss:
-        s = Signature.from_vrs(submit_sig.parsed_payload.payload.signature)
-        addr = s.recover_public_key_from_msg_hash(
-            finalization.to_message()
-        ).to_checksum_address()
-
-        if addr != entity.signing_policy_address:
-            issues.append(
-                mb.build(
-                    MessageLevel.ERROR,
-                    "submit signatures signature doesn't match finalization",
-                ),
-            )
-
-    return issues
-
-
-def validate_fdc(round: VotingRound, entity: Entity, config: Configuration):
-    mb = Message.builder().add(
-        network=config.chain_id,
-        round=round.voting_epoch,
-        protocol=200,
-    )
-
-    epoch = round.voting_epoch
-    fdc = round.fdc
-    finalization = fdc.finalization
-
-    _submit1 = fdc.submit_1.by_identity[entity.identity_address]
-    submit_1 = _submit1.extract_latest(range(epoch.start_s, epoch.end_s))
-
-    _submit2 = fdc.submit_2.by_identity[entity.identity_address]
-    submit_2 = _submit2.extract_latest(
-        range(epoch.next.start_s, epoch.next.reveal_deadline())
-    )
-
-    sig_grace = max(
-        epoch.next.start_s + 55 + 1, (finalization and finalization.timestamp + 1) or 0
-    )
-    _submit_sig = fdc.submit_signatures.by_identity[entity.identity_address]
-    submit_sig = _submit_sig.extract_latest(
-        range(epoch.next.reveal_deadline(), sig_grace)
-    )
-    submit_sig_deadline = _submit_sig.extract_latest(
-        range(epoch.next.reveal_deadline(), epoch.next.end_s)
-    )
-
-    # TODO:(matej) move this to py-flare-common
-    bp = ByteParser(
-        sorted(fdc.consensus_bitvote.items(), key=lambda x: x[1], reverse=True)[0][0]
-    )
-    n_requests = bp.uint16()
-    votes = bp.drain()
-    consensus_bitvote = [False for _ in range(n_requests)]
-    for j, byte in enumerate(reversed(votes)):
-        for shift in range(8):
-            i = n_requests - 1 - j * 8 - shift
-            if i < 0 and (byte >> shift) & 1 == 1:
-                raise ValueError("Invalid payload length.")
-            elif i >= 0:
-                consensus_bitvote[i] = (byte >> shift) & 1 == 1
-
-    # TODO:(matej) check for transactions that happened too late (or too early)
-
-    issues = []
-
-    s1 = submit_1 is not None
-    s2 = submit_2 is not None
-    ss = submit_sig is not None
-    ssd = submit_sig_deadline is not None
-
-    sorted_requests = fdc.requests.sorted()
-    assert len(sorted_requests) == n_requests
-
-    if not s1:
-        # NOTE:(matej) this is expected behaviour in fdc
-        pass
-
-    if not s2:
-        issues.append(mb.build(MessageLevel.ERROR, "no submit2 transaction"))
-
-    expected_signatures = True
-    # TODO:(matej) unnest some
-    if s2:
-        if submit_2.parsed_payload.payload.number_of_requests != len(sorted_requests):
-            issues.append(
-                mb.build(
-                    MessageLevel.ERROR,
-                    "submit 2 length didn't match number of requests in round",
-                )
-            )
-            expected_signatures = False
-        else:
-            for i, (r, bit, cbit) in enumerate(
-                zip(
-                    sorted_requests,
-                    submit_2.parsed_payload.payload.bit_vector,
-                    consensus_bitvote,
-                )
-            ):
-                idx = n_requests - 1 - i
-                at = r.attestation_type
-                si = r.source_id
-
-                if cbit and not bit:
-                    issues.append(
-                        mb.build(
-                            MessageLevel.ERROR,
-                            "submit2 didn't confirm request that was part of consensus "
-                            f"{at.representation}/{si.representation} at index {idx}",
-                        )
-                    )
-                    expected_signatures = False
-
-    if s2 and expected_signatures and not ssd:
-        issues.append(
-            mb.build(
-                MessageLevel.CRITICAL,
-                "no submit signatures transaction, causing reveal offence",
-            )
-        )
-
-    if s2 and ssd and not ss:
-        issues.append(
-            mb.build(
-                MessageLevel.ERROR,
-                (
-                    "no submit signatures transaction during grace period, "
-                    "causing loss of rewards"
-                ),
-            )
-        )
-
-    if not s2 and not ss:
-        issues.append(
-            mb.build(MessageLevel.ERROR, "no submit signatures transaction"),
-        )
-
-    if finalization and ss:
-        s = Signature.from_vrs(submit_sig.parsed_payload.payload.signature)
-        addr = s.recover_public_key_from_msg_hash(
-            finalization.to_message()
-        ).to_checksum_address()
-
-        if addr != entity.signing_policy_address:
-            issues.append(
-                mb.build(
-                    MessageLevel.ERROR,
-                    "submit signatures signature doesn't match finalization",
-                )
-            )
-
-    return issues
+        notify_generic(n.generic, message)
 
 
 async def observer_loop(config: Configuration) -> None:
@@ -516,7 +253,7 @@ async def observer_loop(config: Configuration) -> None:
     # set up target address from config
     tia = w.to_checksum_address(config.identity_address)
     # TODO:(matej) log version and initial voting round, maybe signing policy info
-    log_issue(
+    log_message(
         config,
         Message.builder()
         .add(network=config.chain_id)
@@ -723,13 +460,8 @@ async def observer_loop(config: Configuration) -> None:
 
             rounds = vrm.finalize(block_data)
             for r in rounds:
-                for i in validate_ftso(
-                    r, signing_policy.entity_mapper.by_identity_address[tia], config
-                ):
-                    log_issue(config, i)
-                for i in validate_fdc(
-                    r, signing_policy.entity_mapper.by_identity_address[tia], config
-                ):
-                    log_issue(config, i)
+                entity = signing_policy.entity_mapper.by_identity_address[tia]
+                for message in validate_round(r, entity, config):
+                    log_message(config, message)
 
         block_number = latest_block
