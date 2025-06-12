@@ -58,6 +58,9 @@ def check_submit_2(
     # - submit2 exists but bit vote length doesn't match number of requests -> error
     # - submit2 exists but bit vote does not dominate consensus bit vote -> error
 
+    if not round.fdc.consensus_bitvote:
+        return []
+
     # TODO:(matej) move this to py-flare-common
     bp = ByteParser(
         sorted(round.fdc.consensus_bitvote.items(), key=lambda x: -x[1])[0][0]
@@ -132,6 +135,9 @@ def check_submit_signatures(
     #   dominates consensus bit vote -> reveal offence
     # - submitSignature was sent after the deadline -> warning
     # - signature doesn't match finalization -> error
+
+    if not round.fdc.consensus_bitvote:
+        return []
 
     if submit_2 is None and submit_signatures is None:
         issues.append(
