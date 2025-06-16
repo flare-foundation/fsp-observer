@@ -185,7 +185,7 @@ def check_submit_signatures(
 
     if submit_signatures is not None:
         deadline = max(
-            round.voting_epoch.next.start_s + 55,
+            round.voting_epoch.next.start_s + 60,
             (finalization and finalization.timestamp) or 0,
         )
 

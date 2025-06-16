@@ -249,7 +249,7 @@ class VotingRoundManager:
                 self.rounds.pop(k, None)
                 continue
 
-            # 55 is submit sigs deadline, 10 is relay grace, 10 is additional buffer
+            # need to wait until end of epoch to collect all signatures
             round_completed = k.next.end_s < block["timestamp"]
 
             if round_completed:
