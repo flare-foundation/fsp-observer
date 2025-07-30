@@ -169,7 +169,6 @@ async def get_signing_policy_events(
                 e = RandomAcquisitionStarted.from_dict(data["args"])
             case x:
                 raise ValueError(f"Unexpected event {x}")
-
         builder.add(e)
 
         # signing policy initialized is the last event that gets emitted
@@ -267,7 +266,7 @@ async def observer_loop(config: Configuration) -> None:
         lower_block_id,
         end_block_id,
     )
-    spb = SigningPolicy.builder()
+    spb = SigningPolicy.builder().for_epoch(reward_epoch.next)
 
     # print("Signing policy created for reward epoch", current_rid)
     # print("Reward Epoch object created", reward_epoch_info)
@@ -360,7 +359,8 @@ async def observer_loop(config: Configuration) -> None:
 
             if (
                 spb.signing_policy_initialized is not None
-                and spb.signing_policy_initialized.start_voting_round_id == voting_epoch
+                and spb.signing_policy_initialized.start_voting_round_id
+                == voting_epoch.id
             ):
                 # TODO:(matej) this could fail if the observer is started during
                 # last two hours of the reward epoch
