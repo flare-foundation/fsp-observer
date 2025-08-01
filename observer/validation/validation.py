@@ -53,9 +53,9 @@ def validate_round(
     config: Configuration,
 ) -> Sequence[Message]:
     # TODO:(matej) move this somewhere else
-    round.ftso.calculate_medians(round.voting_epoch, signing_policy)
+    round.ftso.calculate_medians(round.voting_epoch, signing_policy, entity)
 
-    issues = []
+    issues: list[Message] = []
 
     mb_ftso = Message.builder().add(
         network=config.chain_id,

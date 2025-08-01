@@ -1,9 +1,14 @@
+from collections.abc import Sequence
 from typing import Self
 
 from attrs import define, field, frozen
 from eth_typing import ChecksumAddress
 from py_flare_common.fsp.epoch.epoch import RewardEpoch
+from web3 import AsyncWeb3
 
+from configuration.types import Configuration
+
+from .message import Message, MessageLevel
 from .types import (
     RandomAcquisitionStarted,
     SigningPolicyInitialized,
@@ -41,6 +46,34 @@ class Entity:
 
     # this is emitted in signing policy initialized event
     normalized_weight: int
+
+    async def check_addresses(
+        self, config: Configuration, w: AsyncWeb3
+    ) -> Sequence[Message]:
+        mb = Message.builder()
+        messages = []
+
+        addrs = (
+            ("submit", self.submit_address),
+            ("submit signatures", self.submit_signatures_address),
+            ("signing policy", self.signing_policy_address),
+        )
+
+        for name, addr in addrs:
+            balance = await w.eth.get_balance(addr, "latest")
+            if balance < config.fee_threshold * 1e18:
+                level = MessageLevel.WARNING
+                if balance <= 5e18:
+                    level = MessageLevel.ERROR
+
+                messages.append(
+                    mb.build(
+                        level,
+                        f"low balance for {name} address ({balance / 1e18:.4f} NAT)",
+                    )
+                )
+
+        return messages
 
 
 @frozen
@@ -183,7 +216,7 @@ class SigningPolicyBuilder:
         vres = {v.voter: v for v in self.voter_registered}
         vries = {v.voter: v for v in self.voter_registration_info}
 
-        entities = []
+        entities: list[Entity] = []
         mapper = EntityMapper()
 
         for i, voter in enumerate(self.signing_policy_initialized.voters):

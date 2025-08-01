@@ -149,6 +149,7 @@ class Contracts:
     Relay: Contract
     Submission: Contract
     FdcHub: Contract
+    FastUpdater: Contract
 
     @classmethod
     def get_contracts(cls, w: Web3) -> Self:
@@ -222,6 +223,7 @@ class Configuration:
     chain_id: int
     contracts: Contracts
     rpc_url: str
+    p_chain_rpc_url: str
     epoch: Epoch
     notification: Notification
     fee_threshold: int

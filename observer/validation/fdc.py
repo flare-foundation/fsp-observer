@@ -204,5 +204,7 @@ def check_submit_signatures(
                     "submitSignatures signature doesn't match finalization",
                 ),
             )
+        else:
+            round.submitted_signatures = True
 
     return issues

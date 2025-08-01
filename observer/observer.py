@@ -1,9 +1,15 @@
+import hashlib
 import logging
 import time
+from collections import defaultdict
 from collections.abc import Sequence
-from typing import Self
+from types import CoroutineType
+from typing import Any, Self
 
+import requests
+from eth_abi.abi import encode
 from eth_account._utils.signing import to_standard_v
+from eth_account.messages import _hash_eip191_message, encode_defunct
 from eth_keys.datatypes import Signature as EthSignature
 from py_flare_common.fsp.epoch.epoch import RewardEpoch
 from py_flare_common.fsp.messaging import (
@@ -12,19 +18,23 @@ from py_flare_common.fsp.messaging import (
     parse_submit_signature_tx,
 )
 from py_flare_common.fsp.messaging.types import Signature as SSignature
+from py_flare_common.ftso.median import FtsoMedian
 from web3 import AsyncWeb3
 from web3._utils.events import get_event_data
 from web3.middleware import ExtraDataToPOAMiddleware
+from web3.types import TxData
 
 from configuration.types import (
     Configuration,
+    un_prefix_0x,
 )
+from observer.fast_updates_manager import FastUpdatesManager
 from observer.reward_epoch_manager import (
-    Entity,
     SigningPolicy,
 )
 from observer.types import (
     AttestationRequest,
+    FastUpdateFeedsSubmitted,
     ProtocolMessageRelayed,
     RandomAcquisitionStarted,
     SigningPolicyInitialized,
@@ -33,6 +43,7 @@ from observer.types import (
     VoterRegistrationInfo,
     VoterRemoved,
 )
+from observer.validation.minimal_conditions import MinimalConditions
 from observer.validation.validation import validate_round
 
 from .message import Message, MessageLevel
@@ -59,6 +70,73 @@ class Signature(EthSignature):
                 int(s.s, 16),
             )
         )
+
+    @classmethod
+    def from_dict(cls, dict: dict[str, Any]):
+        return Signature(
+            vrs=(
+                to_standard_v(dict["v"]),
+                int.from_bytes((dict["r"]), "big"),
+                int.from_bytes((dict["s"]), "big"),
+            )
+        )
+
+    def recover_addr_from_msg(self, sp_hash: str) -> str:
+        return self.recover_public_key_from_msg_hash(
+            _hash_eip191_message(encode_defunct(hexstr=sp_hash))
+        ).to_checksum_address()
+
+
+def calculate_update_from_tx(config: Configuration, w: AsyncWeb3, tx: TxData):
+    submission = w.eth.contract(
+        abi=config.contracts.Submission.abi, address=config.contracts.Submission.address
+    )
+    fast_updates = w.eth.contract(
+        abi=config.contracts.FastUpdater.abi,
+        address=config.contracts.FastUpdater.address,
+    )
+    assert "input" in tx
+    proxy_input = submission.decode_function_input(tx["input"])[1]["_data"].hex()
+    updates = fast_updates.decode_function_input("0x470e91df" + proxy_input)[1][
+        "_updates"
+    ]
+
+    cred = updates["sortitionCredential"]
+    signed_message = (
+        hashlib.sha256(
+            encode(
+                ["uint256", "(uint256,(uint256,uint256),uint256,uint256)", "bytes"],
+                [
+                    updates["sortitionBlock"],
+                    (
+                        cred["replicate"],
+                        (cred["gamma"]["x"], cred["gamma"]["y"]),
+                        cred["c"],
+                        cred["s"],
+                    ),
+                    updates["deltas"],
+                ],
+            )
+        )
+        .digest()
+        .hex()
+    )
+
+    signing_policy_address = un_prefix_0x(
+        Signature.from_dict(updates["signature"]).recover_addr_from_msg(signed_message)
+    )
+
+    assert "from" in tx
+    address = tx["from"]
+
+    array = "".join(f"{i:08b}" for i in updates["deltas"])
+    assert len(array) % 2 == 0
+    signed_array = [
+        -int(array[u + 1]) if array[u] == "1" else int(array[u + 1])
+        for u in range(0, len(array), 2)
+    ]
+
+    return signing_policy_address, address, len(signed_array)
 
 
 async def find_voter_registration_blocks(
@@ -191,29 +269,12 @@ def log_message(config: Configuration, message: Message):
     notify_generic(n.generic, message)
 
 
-async def cron(config: Configuration, w: AsyncWeb3, e: Entity) -> Sequence[Message]:
-    mb = Message.builder()
-    messages = []
-
-    addrs = (
-        ("submit", e.submit_address),
-        ("submit signatures", e.submit_signatures_address),
-        ("signing policy", e.signing_policy_address),
-    )
-
-    for name, addr in addrs:
-        balance = await w.eth.get_balance(addr, "latest")
-        if balance < config.fee_threshold * 1e18:
-            level = MessageLevel.WARNING
-            if balance <= 5e18:
-                level = MessageLevel.ERROR
-
-            messages.append(
-                mb.build(
-                    level, f"low balance for {name} address ({balance / 1e18:.4f} NAT)"
-                )
-            )
-
+async def cron(
+    check_functions: Sequence[CoroutineType[Any, Any, Sequence[Message]]],
+) -> Sequence[Message]:
+    messages: list[Message] = []
+    for func in check_functions:
+        messages.extend(await func)
     return messages
 
 
@@ -266,6 +327,7 @@ async def observer_loop(config: Configuration) -> None:
         lower_block_id,
         end_block_id,
     )
+    weights = [entity.normalized_weight for entity in signing_policy.entities]
     spb = SigningPolicy.builder().for_epoch(reward_epoch.next)
 
     # print("Signing policy created for reward epoch", current_rid)
@@ -328,8 +390,11 @@ async def observer_loop(config: Configuration) -> None:
         config.contracts.FlareSystemsManager,
         config.contracts.FlareSystemsCalculator,
         config.contracts.FdcHub,
+        config.contracts.FastUpdater,
     ]
     event_signatures = {e.signature: e for c in contracts for e in c.events.values()}
+
+    fum = FastUpdatesManager()
 
     # start listener
     # print("Listener started from block number", block_number)
@@ -341,6 +406,16 @@ async def observer_loop(config: Configuration) -> None:
         config.contracts.Submission.functions["submit1"].signature: "submit1",
         config.contracts.Submission.functions["submit2"].signature: "submit2",
     }
+
+    minimal_conditions = MinimalConditions().for_reward_epoch(reward_epoch.id)
+
+    node_connections = defaultdict(int)
+    uptime_validations = 0
+
+    re_medians: list[list[FtsoMedian]] = []
+    entity_votes: list[list[int | None]] = []
+
+    signatures = []
 
     while True:
         latest_block = await w.eth.block_number
@@ -364,10 +439,57 @@ async def observer_loop(config: Configuration) -> None:
             ):
                 # TODO:(matej) this could fail if the observer is started during
                 # last two hours of the reward epoch
+                entity = signing_policy.entity_mapper.by_identity_address[tia]
+
+                min_cond_messages: list[Message] = []
+
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_ftso_block_latency_feeds(
+                        entity, weights, fum
+                    )
+                )
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_ftso_anchor_feeds(
+                        re_medians, entity_votes
+                    )
+                )
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_staking(
+                        uptime_validations, node_connections
+                    )
+                )
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_fdc_participation(signatures, config)
+                )
+
+                for m in min_cond_messages:
+                    log_message(config, m)
+
                 signing_policy = spb.build()
+
+                weights = [
+                    entity.normalized_weight for entity in signing_policy.entities
+                ]
+
                 spb = SigningPolicy.builder().for_epoch(
                     signing_policy.reward_epoch.next
                 )
+
+                for fu in filter(
+                    lambda x: x.reward_epoch_id < signing_policy.reward_epoch.id,
+                    fum.fast_updates,
+                ):
+                    fum.fast_updates.remove(fu)
+
+                signatures.clear()
+
+                uptime_validations = 0
+                node_connections.clear()
+
+                re_medians.clear()
+                entity_votes.clear()
+
+                minimal_conditions.reward_epoch_id = signing_policy.reward_epoch.id
 
             block_logs = await w.eth.get_logs(
                 {
@@ -416,6 +538,18 @@ async def observer_loop(config: Configuration) -> None:
                         case "RandomAcquisitionStarted":
                             e = RandomAcquisitionStarted.from_dict(data["args"])
                             spb.add(e)
+
+                        case "FastUpdateFeedsSubmitted":
+                            e = FastUpdateFeedsSubmitted.from_dict(
+                                data["args"], data["address"], data["transactionHash"]
+                            )
+                            tx = await w.eth.get_transaction(e.transaction_hash)
+                            spa, address, _ = calculate_update_from_tx(config, w, tx)
+                            entity = signing_policy.entity_mapper.by_identity_address[
+                                tia
+                            ]
+                            if un_prefix_0x(entity.signing_policy_address) == spa:
+                                fum.address_list.add(address)
 
             for tx in block_data["transactions"]:
                 assert not isinstance(tx, bytes)
@@ -486,12 +620,62 @@ async def observer_loop(config: Configuration) -> None:
             messages: list[Message] = []
             entity = signing_policy.entity_mapper.by_identity_address[tia]
 
+            min_cond_messages: list[Message] = []
+
+            min_cond_messages.extend(
+                minimal_conditions.calculate_ftso_block_latency_feeds(
+                    entity, weights, fum
+                )
+            )
+            min_cond_messages.extend(
+                minimal_conditions.calculate_ftso_anchor_feeds(re_medians, entity_votes)
+            )
+            min_cond_messages.extend(
+                minimal_conditions.calculate_staking(
+                    uptime_validations, node_connections
+                )
+            )
+            min_cond_messages.extend(
+                minimal_conditions.calculate_fdc_participation(signatures, config)
+            )
+
+            for m in min_cond_messages:
+                log_message(config, m)
+
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "platform.getCurrentValidators",
+                "params": {"nodeIDs": [node.node_id for node in entity.nodes]},
+            }
+            try:
+                response = requests.post(
+                    config.p_chain_rpc_url, json=payload, timeout=10
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                uptime_validations += 1
+                for node in result["result"]["validators"]:
+                    if node["connected"]:
+                        node_connections[node["nodeID"]] += 1
+
+            except requests.RequestException as e:
+                LOGGER.warning(f"Error calling API: {e}")
+
             if int(time.time() - cron_time) < 60 * 60:
-                messages.extend(await cron(config, w, entity))
+                check_functions = [
+                    entity.check_addresses(config, w),
+                    fum.check_addresses(config, w),
+                ]
+                messages.extend(await cron(check_functions))
 
             rounds = vrm.finalize(block_data)
+            re_medians.extend([round.ftso.medians for round in rounds])
+            entity_votes.extend([round.ftso.observed_entity_votes for round in rounds])
             for r in rounds:
                 messages.extend(validate_round(r, signing_policy, entity, config))
+            signatures.extend([round.submitted_signatures for round in rounds])
 
             for m in messages:
                 log_message(config, m)

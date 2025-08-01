@@ -126,8 +126,14 @@ class FtsoVotingRoundProtocol(
     VotingRoundProtocol[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]
 ):
     medians: list[FtsoMedian] = field(factory=list)
+    observed_entity_votes: list[int | None] = field(factory=list)
 
-    def calculate_medians(self, epoch: VotingEpoch, signing_policy: SigningPolicy):
+    def calculate_medians(
+        self,
+        epoch: VotingEpoch,
+        signing_policy: SigningPolicy,
+        observed_entity: Entity | None = None,
+    ):
         next = epoch.next
         rd = next.reveal_deadline()
 
@@ -160,6 +166,10 @@ class FtsoVotingRoundProtocol(
                 continue
 
             number_of_feeds[len(submit_2.parsed_payload.payload.values)] += 1
+
+            if observed_entity and entity == observed_entity:
+                print("here")
+                self.observed_entity_votes = submit_2.parsed_payload.payload.values
 
             votes_to_consider.append((entity, submit_1, submit_2))
 
@@ -227,6 +237,7 @@ class VotingRound:
 
     ftso: FtsoVotingRoundProtocol = field(factory=FtsoVotingRoundProtocol)
     fdc: FdcVotingRoundProtocol = field(factory=FdcVotingRoundProtocol)
+    submitted_signatures: bool = False
 
 
 @define
