@@ -33,6 +33,7 @@ from observer.fast_updates_manager import FastUpdate, FastUpdatesManager
 from observer.reward_epoch_manager import (
     SigningPolicy,
 )
+from observer.signing_policy_manager import SigningPolicyManager
 from observer.types import (
     AttestationRequest,
     FastUpdateFeedsSubmitted,
@@ -348,7 +349,6 @@ async def observer_loop(config: Configuration) -> None:
         lower_block_id,
         end_block_id,
     )
-    weights = [entity.normalized_weight for entity in signing_policy.entities]
     spb = SigningPolicy.builder().for_epoch(reward_epoch.next)
 
     # print("Signing policy created for reward epoch", current_rid)
@@ -416,6 +416,9 @@ async def observer_loop(config: Configuration) -> None:
     event_signatures = {e.signature: e for c in contracts for e in c.events.values()}
 
     fum = FastUpdatesManager()
+    spm = SigningPolicyManager()
+    spm.previous_policy = signing_policy
+    spm.current_policy = signing_policy
 
     # start listener
     # print("Listener started from block number", block_number)
@@ -462,21 +465,13 @@ async def observer_loop(config: Configuration) -> None:
             ):
                 # TODO:(matej) this could fail if the observer is started during
                 # last two hours of the reward epoch
+                spm.previous_policy = signing_policy
                 signing_policy = spb.build()
-
-                weights = [
-                    entity.normalized_weight for entity in signing_policy.entities
-                ]
+                spm.current_policy = signing_policy
 
                 spb = SigningPolicy.builder().for_epoch(
                     signing_policy.reward_epoch.next
                 )
-
-                for fu in filter(
-                    lambda x: x.reward_epoch_id < signing_policy.reward_epoch.id,
-                    fum.fast_updates,
-                ):
-                    fum.fast_updates.remove(fu)
 
                 minimal_conditions.reward_epoch_id = signing_policy.reward_epoch.id
 
@@ -546,6 +541,13 @@ async def observer_loop(config: Configuration) -> None:
                                     update_array,
                                 )
                             )
+                            # with expected sample size 1 and average block time of 1s,
+                            # this should be an ok approximation
+                            if (
+                                len(fum.fast_updates)
+                                > minimal_conditions.time_period.value
+                            ):
+                                fum.fast_updates.popleft()
                             if un_prefix_0x(entity.signing_policy_address) == spa:
                                 fum.address_list.add(address)
 
@@ -626,7 +628,7 @@ async def observer_loop(config: Configuration) -> None:
 
                 min_cond_messages.extend(
                     minimal_conditions.calculate_ftso_block_latency_feeds(
-                        entity, weights, fum
+                        entity, spm, fum
                     )
                 )
                 min_cond_messages.extend(

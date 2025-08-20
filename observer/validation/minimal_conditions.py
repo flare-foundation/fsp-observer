@@ -7,6 +7,7 @@ from py_flare_common.ftso.median import FtsoMedian
 from observer.fast_updates_manager import FastUpdatesManager
 from observer.message import Message, MessageLevel
 from observer.reward_epoch_manager import Entity
+from observer.signing_policy_manager import SigningPolicyManager
 
 
 class Interval(Enum):
@@ -56,16 +57,43 @@ class MinimalConditions:
         return messages
 
     def calculate_ftso_block_latency_feeds(
-        self, entity: Entity, weights: list[int], fum: FastUpdatesManager
+        self, entity: Entity, spm: SigningPolicyManager, fum: FastUpdatesManager
     ) -> list[Message]:
         mb = Message.builder()
         messages = []
-        total_active_weight = sum(weights)
-        normalized_weight = entity.normalized_weight
+        previous_total_active_weight = sum(
+            [e.normalized_weight for e in spm.previous_policy.entities]
+        )
+        previous_normalized_weight = (
+            spm.previous_policy.entity_mapper.by_identity_address[
+                entity.identity_address
+            ].normalized_weight
+        )
+        previous_number_of_updates = len(
+            list(
+                filter(
+                    lambda x: x.reward_epoch_id == spm.previous_policy.reward_epoch.id,
+                    fum.fast_updates,
+                )
+            )
+        )
+        previous_expected_updates = (
+            0.8
+            * previous_number_of_updates
+            * previous_normalized_weight
+            / previous_total_active_weight
+        )
+
+        total_active_weight = sum(
+            [e.normalized_weight for e in spm.current_policy.entities]
+        )
+        normalized_weight = spm.current_policy.entity_mapper.by_identity_address[
+            entity.identity_address
+        ].normalized_weight
         number_of_updates = len(
             list(
                 filter(
-                    lambda x: x.reward_epoch_id == self.reward_epoch_id,
+                    lambda x: x.reward_epoch_id == spm.current_policy.reward_epoch.id,
                     fum.fast_updates,
                 )
             )
@@ -74,16 +102,34 @@ class MinimalConditions:
             0.8 * number_of_updates * normalized_weight / total_active_weight
         )
 
-        def filter1(x):
-            return x.address in fum.address_list
-
-        def filter2(x):
-            return x.reward_epoch_id == self.reward_epoch_id
-
-        filters = (filter1, filter2)
-        actual_updates = len(
-            list(filter(lambda x: all(f(x) for f in filters), fum.fast_updates))
+        previous_actual_updates = len(
+            list(
+                filter(
+                    lambda x: x.address in fum.address_list
+                    and x.reward_epoch_id == spm.previous_policy.reward_epoch.id,
+                    fum.fast_updates,
+                )
+            )
         )
+        actual_updates = len(
+            list(
+                filter(
+                    lambda x: x.address in fum.address_list
+                    and x.reward_epoch_id == spm.current_policy.reward_epoch.id,
+                    fum.fast_updates,
+                )
+            )
+        )
+        if not (
+            previous_actual_updates >= previous_expected_updates
+            or previous_normalized_weight < 0.02 * previous_total_active_weight
+        ):
+            messages.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    "Not meeting minimal condition for fast updates in the latest interval",  # noqa: E501
+                )
+            )
         if not (
             actual_updates >= expected_updates
             or normalized_weight < 0.02 * total_active_weight

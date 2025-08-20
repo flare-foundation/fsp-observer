@@ -1,3 +1,4 @@
+from collections import deque
 from collections.abc import Sequence
 
 from attrs import define, field, frozen
@@ -18,7 +19,7 @@ class FastUpdate:
 
 @define
 class FastUpdatesManager:
-    fast_updates: list[FastUpdate] = field(factory=list)
+    fast_updates: deque[FastUpdate] = field(factory=deque)
     address_list: set[ChecksumAddress] = field(factory=set)
 
     async def check_addresses(
