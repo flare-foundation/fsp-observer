@@ -5,7 +5,6 @@ from eth_typing import ChecksumAddress
 from web3 import AsyncWeb3
 
 from configuration.types import Configuration
-from observer.reward_epoch_manager import Entity
 
 from .message import Message, MessageLevel
 
@@ -13,7 +12,7 @@ from .message import Message, MessageLevel
 @frozen
 class FastUpdate:
     reward_epoch_id: int
-    entity: Entity
+    address: ChecksumAddress
     update_array: list[int]
 
 

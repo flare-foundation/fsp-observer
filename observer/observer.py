@@ -1,12 +1,13 @@
 import hashlib
 import logging
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Sequence
 from types import CoroutineType
-from typing import Any, Self
+from typing import Any, Self, Union
 
 import requests
+from base58 import BITCOIN_ALPHABET, b58encode, scrub_input
 from eth_abi.abi import encode
 from eth_account._utils.signing import to_standard_v
 from eth_account.messages import _hash_eip191_message, encode_defunct
@@ -28,7 +29,7 @@ from configuration.types import (
     Configuration,
     un_prefix_0x,
 )
-from observer.fast_updates_manager import FastUpdatesManager
+from observer.fast_updates_manager import FastUpdate, FastUpdatesManager
 from observer.reward_epoch_manager import (
     SigningPolicy,
 )
@@ -44,7 +45,7 @@ from observer.types import (
     VoterRemoved,
 )
 from observer.validation.minimal_conditions import MinimalConditions
-from observer.validation.validation import validate_round
+from observer.validation.validation import extract_round_for_entity, validate_round
 
 from .message import Message, MessageLevel
 from .notification import notify_discord, notify_generic, notify_slack, notify_telegram
@@ -58,6 +59,26 @@ logging.basicConfig(
     format="%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s",
     level="INFO",
 )
+
+
+def avalanche_b58_encode_check(
+    v: Union[str, bytes],
+    alphabet: bytes = BITCOIN_ALPHABET,
+) -> bytes:
+    """
+    Encode a string using Base58 with a 4 character checksum like in avalanche
+    and not like in spec
+    https://github.com/flare-foundation/go-flare/blob/93fd844b1e85366ee9c1c4a3fb9e9399220534cc/avalanchego/utils/hashing/hashing.go#L78-L81
+    """
+    v = scrub_input(v)
+
+    digest = hashlib.sha256(v).digest()
+    return b58encode(v + digest[-4:], alphabet=alphabet)
+
+
+def node_id_to_representation(node_id):
+    decoded = bytes.fromhex(node_id)
+    return f"NodeID-{avalanche_b58_encode_check(decoded).decode()}"
 
 
 class Signature(EthSignature):
@@ -136,7 +157,7 @@ def calculate_update_from_tx(config: Configuration, w: AsyncWeb3, tx: TxData):
         for u in range(0, len(array), 2)
     ]
 
-    return signing_policy_address, address, len(signed_array)
+    return signing_policy_address, address, signed_array
 
 
 async def find_voter_registration_blocks(
@@ -408,14 +429,16 @@ async def observer_loop(config: Configuration) -> None:
     }
 
     minimal_conditions = MinimalConditions().for_reward_epoch(reward_epoch.id)
+    last_minimal_conditions_check = int(time.time())
+    last_ping = time.time()
 
     node_connections = defaultdict(int)
     uptime_validations = 0
 
-    re_medians: list[list[FtsoMedian]] = []
-    entity_votes: list[list[int | None]] = []
+    medians: deque[list[FtsoMedian]] = deque()
+    entity_votes: deque[list[int | None]] = deque()
 
-    signatures = []
+    signatures: deque[bool] = deque()
 
     while True:
         latest_block = await w.eth.block_number
@@ -439,32 +462,6 @@ async def observer_loop(config: Configuration) -> None:
             ):
                 # TODO:(matej) this could fail if the observer is started during
                 # last two hours of the reward epoch
-                entity = signing_policy.entity_mapper.by_identity_address[tia]
-
-                min_cond_messages: list[Message] = []
-
-                min_cond_messages.extend(
-                    minimal_conditions.calculate_ftso_block_latency_feeds(
-                        entity, weights, fum
-                    )
-                )
-                min_cond_messages.extend(
-                    minimal_conditions.calculate_ftso_anchor_feeds(
-                        re_medians, entity_votes
-                    )
-                )
-                min_cond_messages.extend(
-                    minimal_conditions.calculate_staking(
-                        uptime_validations, node_connections
-                    )
-                )
-                min_cond_messages.extend(
-                    minimal_conditions.calculate_fdc_participation(signatures, config)
-                )
-
-                for m in min_cond_messages:
-                    log_message(config, m)
-
                 signing_policy = spb.build()
 
                 weights = [
@@ -480,14 +477,6 @@ async def observer_loop(config: Configuration) -> None:
                     fum.fast_updates,
                 ):
                     fum.fast_updates.remove(fu)
-
-                signatures.clear()
-
-                uptime_validations = 0
-                node_connections.clear()
-
-                re_medians.clear()
-                entity_votes.clear()
 
                 minimal_conditions.reward_epoch_id = signing_policy.reward_epoch.id
 
@@ -544,10 +533,19 @@ async def observer_loop(config: Configuration) -> None:
                                 data["args"], data["address"], data["transactionHash"]
                             )
                             tx = await w.eth.get_transaction(e.transaction_hash)
-                            spa, address, _ = calculate_update_from_tx(config, w, tx)
+                            spa, address, update_array = calculate_update_from_tx(
+                                config, w, tx
+                            )
                             entity = signing_policy.entity_mapper.by_identity_address[
                                 tia
                             ]
+                            fum.fast_updates.append(
+                                FastUpdate(
+                                    signing_policy.reward_epoch.id,
+                                    address,
+                                    update_array,
+                                )
+                            )
                             if un_prefix_0x(entity.signing_policy_address) == spa:
                                 fum.address_list.add(address)
 
@@ -620,48 +618,68 @@ async def observer_loop(config: Configuration) -> None:
             messages: list[Message] = []
             entity = signing_policy.entity_mapper.by_identity_address[tia]
 
-            min_cond_messages: list[Message] = []
+            if (
+                int(time.time() - last_minimal_conditions_check)
+                > minimal_conditions.time_period.value
+            ):
+                min_cond_messages: list[Message] = []
 
-            min_cond_messages.extend(
-                minimal_conditions.calculate_ftso_block_latency_feeds(
-                    entity, weights, fum
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_ftso_block_latency_feeds(
+                        entity, weights, fum
+                    )
                 )
-            )
-            min_cond_messages.extend(
-                minimal_conditions.calculate_ftso_anchor_feeds(re_medians, entity_votes)
-            )
-            min_cond_messages.extend(
-                minimal_conditions.calculate_staking(
-                    uptime_validations, node_connections
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_ftso_anchor_feeds(
+                        medians, entity_votes
+                    )
                 )
-            )
-            min_cond_messages.extend(
-                minimal_conditions.calculate_fdc_participation(signatures, config)
-            )
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_staking(
+                        uptime_validations, node_connections
+                    )
+                )
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_fdc_participation(signatures)
+                )
 
-            for m in min_cond_messages:
-                log_message(config, m)
+                for m in min_cond_messages:
+                    log_message(config, m)
+
+                last_minimal_conditions_check = int(time.time())
+                uptime_validations = 0
+                node_connections.clear()
 
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "platform.getCurrentValidators",
-                "params": {"nodeIDs": [node.node_id for node in entity.nodes]},
+                "params": {
+                    "nodeIDs": [
+                        node_id_to_representation(node.node_id) for node in entity.nodes
+                    ]
+                },
             }
-            try:
-                response = requests.post(
-                    config.p_chain_rpc_url, json=payload, timeout=10
-                )
-                response.raise_for_status()
-                result = response.json()
+            if int(time.time() - last_ping) > 90:
+                try:
+                    if len([node.node_id for node in entity.nodes]) > 0:
+                        response = requests.post(
+                            config.p_chain_rpc_url, json=payload, timeout=10
+                        )
+                        response.raise_for_status()
+                        result = response.json()
+                        if "error" in result:
+                            LOGGER.warning("Error calling API: check params")
 
-                uptime_validations += 1
-                for node in result["result"]["validators"]:
-                    if node["connected"]:
-                        node_connections[node["nodeID"]] += 1
+                        uptime_validations += 1
+                        for node in result["result"]["validators"]:
+                            if node["connected"]:
+                                node_connections[node["nodeID"]] += 1
+                    last_ping = time.time()
 
-            except requests.RequestException as e:
-                LOGGER.warning(f"Error calling API: {e}")
+                except requests.RequestException as e:
+                    LOGGER.warning(f"Error calling API: {e}")
+                    last_ping = time.time()
 
             if int(time.time() - cron_time) < 60 * 60:
                 check_functions = [
@@ -671,11 +689,24 @@ async def observer_loop(config: Configuration) -> None:
                 messages.extend(await cron(check_functions))
 
             rounds = vrm.finalize(block_data)
-            re_medians.extend([round.ftso.medians for round in rounds])
-            entity_votes.extend([round.ftso.observed_entity_votes for round in rounds])
+            if len(rounds) > 0:
+                medians.extend([round.ftso.medians for round in rounds])
+                for round in rounds:
+                    extracted_ftso = extract_round_for_entity(
+                        round.ftso, entity, round.voting_epoch
+                    )
+                    assert extracted_ftso.submit_2
+                    votes = extracted_ftso.submit_2.parsed_payload.payload.values
+                    entity_votes.append(votes)
+                # a new vote is expected every 90 seconds
+                while len(medians) > minimal_conditions.time_period.value // 90:
+                    medians.popleft()
+                    entity_votes.popleft()
             for r in rounds:
                 messages.extend(validate_round(r, signing_policy, entity, config))
             signatures.extend([round.submitted_signatures for round in rounds])
+            while len(signatures) > minimal_conditions.time_period.value // 90:
+                signatures.popleft()
 
             for m in messages:
                 log_message(config, m)

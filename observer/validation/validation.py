@@ -53,7 +53,7 @@ def validate_round(
     config: Configuration,
 ) -> Sequence[Message]:
     # TODO:(matej) move this somewhere else
-    round.ftso.calculate_medians(round.voting_epoch, signing_policy, entity)
+    round.ftso.calculate_medians(round.voting_epoch, signing_policy)
 
     issues: list[Message] = []
 
