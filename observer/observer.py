@@ -416,9 +416,7 @@ async def observer_loop(config: Configuration) -> None:
     event_signatures = {e.signature: e for c in contracts for e in c.events.values()}
 
     fum = FastUpdatesManager()
-    spm = SigningPolicyManager()
-    spm.previous_policy = signing_policy
-    spm.current_policy = signing_policy
+    spm = SigningPolicyManager(signing_policy, signing_policy)
 
     # start listener
     # print("Listener started from block number", block_number)
@@ -443,6 +441,12 @@ async def observer_loop(config: Configuration) -> None:
 
     signatures: deque[bool] = deque()
 
+    voter_registration_started: bool = False
+    voter_registration_started_ts: int = 0
+    registered: bool = False
+    warned = False
+    error = False
+
     while True:
         latest_block = await w.eth.block_number
         if block_number == latest_block:
@@ -465,6 +469,10 @@ async def observer_loop(config: Configuration) -> None:
             ):
                 # TODO:(matej) this could fail if the observer is started during
                 # last two hours of the reward epoch
+                voter_registration_started = False
+                warned = False
+                error = False
+                registered = False
                 spm.previous_policy = signing_policy
                 signing_policy = spb.build()
                 spm.current_policy = signing_policy
@@ -510,6 +518,14 @@ async def observer_loop(config: Configuration) -> None:
                         case "VoterRegistered":
                             e = VoterRegistered.from_dict(data["args"])
                             spb.add(e)
+                            entity = signing_policy.entity_mapper.by_identity_address[
+                                tia
+                            ]
+                            if (
+                                entity.signing_policy_address
+                                == e.signing_policy_address
+                            ):
+                                registered = True
                         case "VoterRemoved":
                             e = VoterRemoved.from_dict(data["args"])
                             spb.add(e)
@@ -519,6 +535,8 @@ async def observer_loop(config: Configuration) -> None:
                         case "VotePowerBlockSelected":
                             e = VotePowerBlockSelected.from_dict(data["args"])
                             spb.add(e)
+                            voter_registration_started = True
+                            voter_registration_started_ts = int(time.time())
                         case "RandomAcquisitionStarted":
                             e = RandomAcquisitionStarted.from_dict(data["args"])
                             spb.add(e)
@@ -620,10 +638,7 @@ async def observer_loop(config: Configuration) -> None:
             messages: list[Message] = []
             entity = signing_policy.entity_mapper.by_identity_address[tia]
 
-            if (
-                int(time.time() - last_minimal_conditions_check)
-                > minimal_conditions.time_period.value
-            ):
+            if int(time.time() - last_minimal_conditions_check) > 60:
                 min_cond_messages: list[Message] = []
 
                 min_cond_messages.extend(
@@ -709,6 +724,26 @@ async def observer_loop(config: Configuration) -> None:
             signatures.extend([round.submitted_signatures for round in rounds])
             while len(signatures) > minimal_conditions.time_period.value // 90:
                 signatures.popleft()
+
+            if voter_registration_started and not registered:
+                mb = Message.builder()
+                if int(time.time() - voter_registration_started_ts) > 60 and not warned:
+                    level = MessageLevel.WARNING
+                    message = mb.build(level, "Voter not registered after 1 minute")
+                    messages.append(message)
+                if int(time.time() - voter_registration_started_ts) > 120 and not error:
+                    warned = True
+                    level = MessageLevel.ERROR
+                    message = mb.build(level, "Voter not registered after 2 minutes")
+                    messages.append(message)
+                if int(time.time() - voter_registration_started_ts) > 180:
+                    error = True
+                    level = MessageLevel.CRITICAL
+                    message = mb.build(
+                        level,
+                        f"Voter not registered after {int(time.time() - voter_registration_started_ts) // 60} minutes",  # noqa: E501
+                    )
+                    messages.append(message)
 
             for m in messages:
                 log_message(config, m)
