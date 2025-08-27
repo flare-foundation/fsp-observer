@@ -144,6 +144,7 @@ FLARE_CONTRACT_REGISTRY_ABI = json.load(
 @frozen
 class Contracts:
     VoterRegistry: Contract
+    VoterPreRegistry: Contract
     FlareSystemsCalculator: Contract
     FlareSystemsManager: Contract
     Relay: Contract

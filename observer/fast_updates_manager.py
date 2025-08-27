@@ -45,3 +45,29 @@ class FastUpdatesManager:
                 )
 
         return messages
+
+    def check_update_length(
+        self, nr_of_feeds: int, fast_update_re: int
+    ) -> Sequence[Message]:
+        mb = Message.builder()
+        messages = []
+        level = MessageLevel.WARNING
+        fus = list(
+            filter(
+                lambda x: x.reward_epoch_id >= fast_update_re
+                and x.address in self.address_list,
+                self.fast_updates,
+            )
+        )
+        if len(fus) > 0:
+            fu = fus[-1]
+        else:
+            return messages
+        if nr_of_feeds > 0 and len(fu.update_array) != nr_of_feeds:
+            messages.append(
+                mb.build(
+                    level,
+                    f"Incorrect length of last update array, should be {nr_of_feeds} but got {len(fu.update_array)}",  # noqa: E501
+                )
+            )
+        return messages

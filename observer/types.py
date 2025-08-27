@@ -198,3 +198,41 @@ class FastUpdateFeedsSubmitted:
             transaction_hash=tx_hash,
             signing_policy_address=d["signingPolicyAddress"],
         )
+
+
+@frozen
+class FastUpdateFeeds:
+    voting_round_id: int
+    emitter_address: ChecksumAddress
+    transaction_hash: HexBytes
+    feeds: list[int]
+    decimals: list[int]
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any], address: ChecksumAddress, tx_hash: HexBytes):
+        return cls(
+            voting_round_id=int(d["votingEpochId"]),
+            emitter_address=address,
+            transaction_hash=tx_hash,
+            feeds=[int(v) for v in d["feeds"]],
+            decimals=[int(v) for v in d["decimals"]],
+        )
+
+
+@frozen
+class VoterPreRegistered:
+    block: int
+    emitter_address: ChecksumAddress
+    transaction_hash: HexBytes
+    voter: ChecksumAddress
+    reward_epoch_id: int
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any], address: ChecksumAddress, tx_hash: HexBytes):
+        return cls(
+            block=int(d["block"]),
+            emitter_address=address,
+            transaction_hash=tx_hash,
+            voter=d["voter"],
+            reward_epoch_id=int(d["rewardEpochId"]),
+        )

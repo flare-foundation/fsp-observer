@@ -36,11 +36,13 @@ from observer.reward_epoch_manager import (
 from observer.signing_policy_manager import SigningPolicyManager
 from observer.types import (
     AttestationRequest,
+    FastUpdateFeeds,
     FastUpdateFeedsSubmitted,
     ProtocolMessageRelayed,
     RandomAcquisitionStarted,
     SigningPolicyInitialized,
     VotePowerBlockSelected,
+    VoterPreRegistered,
     VoterRegistered,
     VoterRegistrationInfo,
     VoterRemoved,
@@ -408,6 +410,7 @@ async def observer_loop(config: Configuration) -> None:
     contracts = [
         config.contracts.Relay,
         config.contracts.VoterRegistry,
+        config.contracts.VoterPreRegistry,
         config.contracts.FlareSystemsManager,
         config.contracts.FlareSystemsCalculator,
         config.contracts.FdcHub,
@@ -444,8 +447,13 @@ async def observer_loop(config: Configuration) -> None:
     voter_registration_started: bool = False
     voter_registration_started_ts: int = 0
     registered: bool = False
-    warned = False
-    error = False
+
+    preregistration_started: bool = False
+    preregistration_started_ts: int = 0
+    preregistered: bool = False
+
+    nr_of_feeds: int = 0
+    fast_update_re: int = 0
 
     while True:
         latest_block = await w.eth.block_number
@@ -470,8 +478,6 @@ async def observer_loop(config: Configuration) -> None:
                 # TODO:(matej) this could fail if the observer is started during
                 # last two hours of the reward epoch
                 voter_registration_started = False
-                warned = False
-                error = False
                 registered = False
                 spm.previous_policy = signing_policy
                 signing_policy = spb.build()
@@ -533,6 +539,8 @@ async def observer_loop(config: Configuration) -> None:
                             e = VoterRegistrationInfo.from_dict(data["args"])
                             spb.add(e)
                         case "VotePowerBlockSelected":
+                            preregistration_started = False
+                            preregistered = False
                             e = VotePowerBlockSelected.from_dict(data["args"])
                             spb.add(e)
                             voter_registration_started = True
@@ -540,7 +548,8 @@ async def observer_loop(config: Configuration) -> None:
                         case "RandomAcquisitionStarted":
                             e = RandomAcquisitionStarted.from_dict(data["args"])
                             spb.add(e)
-
+                            preregistration_started = True
+                            preregistration_started_ts = int(time.time())
                         case "FastUpdateFeedsSubmitted":
                             e = FastUpdateFeedsSubmitted.from_dict(
                                 data["args"], data["address"], data["transactionHash"]
@@ -568,6 +577,25 @@ async def observer_loop(config: Configuration) -> None:
                                 fum.fast_updates.popleft()
                             if un_prefix_0x(entity.signing_policy_address) == spa:
                                 fum.address_list.add(address)
+                        case "FastUpdateFeeds":
+                            e = FastUpdateFeeds.from_dict(
+                                data["args"], data["address"], data["transactionHash"]
+                            )
+                            nr_of_feeds, fast_update_re = (
+                                len(e.feeds),
+                                ref.from_voting_epoch(
+                                    vef.make_epoch(e.voting_round_id)
+                                ).id,
+                            )
+                        case "VoterPreRegistered":
+                            e = VoterPreRegistered.from_dict(
+                                data["args"], data["address"], data["transactionHash"]
+                            )
+                            entity = signing_policy.entity_mapper.by_identity_address[
+                                tia
+                            ]
+                            if tia == e.voter:
+                                preregistered = True
 
             for tx in block_data["transactions"]:
                 assert not isinstance(tx, bytes)
@@ -704,6 +732,7 @@ async def observer_loop(config: Configuration) -> None:
                     fum.check_addresses(config, w),
                 ]
                 messages.extend(await cron(check_functions))
+                messages.extend(fum.check_update_length(nr_of_feeds, fast_update_re))
 
             rounds = vrm.finalize(block_data)
             if len(rounds) > 0:
@@ -721,23 +750,24 @@ async def observer_loop(config: Configuration) -> None:
                     entity_votes.popleft()
             for r in rounds:
                 messages.extend(validate_round(r, signing_policy, entity, config))
+
             signatures.extend([round.submitted_signatures for round in rounds])
             while len(signatures) > minimal_conditions.time_period.value // 90:
                 signatures.popleft()
 
+            if preregistration_started and not preregistered:
+                mb = Message.builder()
+                if int(time.time() - preregistration_started_ts) > 60:
+                    level = MessageLevel.CRITICAL
+                    message = mb.build(
+                        level,
+                        f"Voter not preregistered after {int(time.time() - preregistration_started_ts) // 60} minutes",  # noqa: E501
+                    )
+                    messages.append(message)
+
             if voter_registration_started and not registered:
                 mb = Message.builder()
-                if int(time.time() - voter_registration_started_ts) > 60 and not warned:
-                    level = MessageLevel.WARNING
-                    message = mb.build(level, "Voter not registered after 1 minute")
-                    messages.append(message)
-                if int(time.time() - voter_registration_started_ts) > 120 and not error:
-                    warned = True
-                    level = MessageLevel.ERROR
-                    message = mb.build(level, "Voter not registered after 2 minutes")
-                    messages.append(message)
-                if int(time.time() - voter_registration_started_ts) > 180:
-                    error = True
+                if int(time.time() - voter_registration_started_ts) > 60:
                     level = MessageLevel.CRITICAL
                     message = mb.build(
                         level,

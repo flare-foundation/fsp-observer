@@ -121,18 +121,8 @@ class MinimalConditions:
             )
         )
         if not (
-            previous_actual_updates >= previous_expected_updates
-            or previous_normalized_weight < 0.02 * previous_total_active_weight
-        ):
-            messages.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    "Not meeting minimal condition for fast updates in the latest interval",  # noqa: E501
-                )
-            )
-        if not (
-            actual_updates >= expected_updates
-            or normalized_weight < 0.02 * total_active_weight
+            (previous_actual_updates + actual_updates)
+            >= (previous_expected_updates + expected_updates)
         ):
             messages.append(
                 mb.build(
