@@ -29,8 +29,10 @@ from configuration.types import (
     Configuration,
     un_prefix_0x,
 )
+from observer.contract_address_manager import ContractAddressManager
 from observer.fast_updates_manager import FastUpdate, FastUpdatesManager
 from observer.reward_epoch_manager import (
+    RewardManager,
     SigningPolicy,
 )
 from observer.signing_policy_manager import SigningPolicyManager
@@ -415,11 +417,16 @@ async def observer_loop(config: Configuration) -> None:
         config.contracts.FlareSystemsCalculator,
         config.contracts.FdcHub,
         config.contracts.FastUpdater,
+        config.contracts.RewardManager,
     ]
     event_signatures = {e.signature: e for c in contracts for e in c.events.values()}
 
     fum = FastUpdatesManager()
     spm = SigningPolicyManager(signing_policy, signing_policy)
+    cam = ContractAddressManager(
+        config.contracts.Submission.address, config.contracts.Relay.address
+    )
+    rm = RewardManager()
 
     # start listener
     # print("Listener started from block number", block_number)
@@ -489,6 +496,11 @@ async def observer_loop(config: Configuration) -> None:
 
                 minimal_conditions.reward_epoch_id = signing_policy.reward_epoch.id
 
+                entity = signing_policy.entity_mapper.by_identity_address[tia]
+                unclaimed_rewards = await rm.get_unclaimed_rewards(entity, config, w)
+                for m in unclaimed_rewards:
+                    log_message(config, m)
+
             block_logs = await w.eth.get_logs(
                 {
                     "address": [contract.address for contract in contracts],
@@ -497,6 +509,8 @@ async def observer_loop(config: Configuration) -> None:
                 }
             )
 
+            tx_messages = []
+            event_messages = []
             for log in block_logs:
                 sig = log["topics"][0]
 
@@ -513,6 +527,18 @@ async def observer_loop(config: Configuration) -> None:
                                 voting_round.ftso.finalization = e
                             if e.protocol_id == 200:
                                 voting_round.fdc.finalization = e
+
+                            entity = signing_policy.entity_mapper.by_identity_address[
+                                tia
+                            ]
+                            tx = await w.eth.get_transaction(data["transactionHash"])
+                            assert "to" in tx
+                            assert "from" in tx
+                            if tx["from"] == entity.identity_address:
+                                relay_address = tx["to"]
+                                event_messages.extend(
+                                    cam.check_relay_address(relay_address)
+                                )
 
                         case "AttestationRequest":
                             e = AttestationRequest.from_dict(data, voting_epoch)
@@ -607,8 +633,11 @@ async def observer_loop(config: Configuration) -> None:
                 entity = signing_policy.entity_mapper.by_omni.get(sender_address)
                 if entity is None:
                     continue
+                target_entity = signing_policy.entity_mapper.by_identity_address[tia]
 
                 if called_function_sig in target_function_signatures:
+                    if entity == target_entity:
+                        tx_messages.extend(cam.check_submission_address(wtx.to_address))
                     mode = target_function_signatures[called_function_sig]
                     match mode:
                         case "submit1":
@@ -664,6 +693,8 @@ async def observer_loop(config: Configuration) -> None:
                                 pass
 
             messages: list[Message] = []
+            messages.extend(tx_messages)
+            messages.extend(event_messages)
             entity = signing_policy.entity_mapper.by_identity_address[tia]
 
             if int(time.time() - last_minimal_conditions_check) > 60:

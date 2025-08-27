@@ -256,3 +256,42 @@ class SigningPolicyBuilder:
             entities=entities,
             entity_mapper=mapper,
         )
+
+
+@define
+class RewardManager:
+    async def get_unclaimed_rewards(
+        self, entity: Entity, config: Configuration, w: AsyncWeb3
+    ) -> Sequence[Message]:
+        mb = Message.builder()
+        messages = []
+        addresses = [
+            entity.identity_address,
+            entity.delegation_address,
+            entity.signing_policy_address,
+            entity.submit_address,
+            entity.submit_signatures_address,
+        ]
+        claimable_func = w.eth.contract(
+            abi=config.contracts.RewardManager.abi,
+            address=config.contracts.RewardManager.address,
+        ).functions["getRewardEpochIdsWithClaimableRewards"]
+        min_re, max_re = await claimable_func().call()
+        for address in addresses:
+            for re in range(min_re, max_re + 1):
+                for claim_type in range(4):
+                    unclaimed_func = w.eth.contract(
+                        abi=config.contracts.RewardManager.abi,
+                        address=config.contracts.RewardManager.address,
+                    ).functions["getUnclaimedRewardState"]
+                    state = await unclaimed_func(address, re, claim_type).call()
+                    # we are looking for claims that are not initialised
+                    # and with non-zero amount
+                    if not state[0] and state[1] > 0:
+                        messages.append(
+                            mb.build(
+                                MessageLevel.WARNING,
+                                f"Unclaimed rewards in reward epoch {re}, claim type {claim_type}, amount {state[1]}",  # noqa: E501
+                            )
+                        )
+        return messages

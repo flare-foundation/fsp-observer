@@ -151,6 +151,7 @@ class Contracts:
     Submission: Contract
     FdcHub: Contract
     FastUpdater: Contract
+    RewardManager: Contract
 
     @classmethod
     def get_contracts(cls, w: Web3) -> Self:
