@@ -40,7 +40,7 @@ class FastUpdatesManager:
                 messages.append(
                     mb.build(
                         level,
-                        f"low balance for {name} address ({balance / 1e18:.4f} NAT)",
+                        f"low balance for {name} {addr} ({balance / 1e18:.4f} NAT)",
                     )
                 )
 

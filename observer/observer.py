@@ -602,6 +602,9 @@ async def observer_loop(config: Configuration) -> None:
                             ):
                                 fum.fast_updates.popleft()
                             if un_prefix_0x(entity.signing_policy_address) == spa:
+                                event_messages.extend(
+                                    fum.check_update_length(nr_of_feeds, fast_update_re)
+                                )
                                 fum.address_list.add(address)
                         case "FastUpdateFeeds":
                             e = FastUpdateFeeds.from_dict(
@@ -763,7 +766,6 @@ async def observer_loop(config: Configuration) -> None:
                     fum.check_addresses(config, w),
                 ]
                 messages.extend(await cron(check_functions))
-                messages.extend(fum.check_update_length(nr_of_feeds, fast_update_re))
 
             rounds = vrm.finalize(block_data)
             if len(rounds) > 0:
@@ -772,9 +774,11 @@ async def observer_loop(config: Configuration) -> None:
                     extracted_ftso = extract_round_for_entity(
                         round.ftso, entity, round.voting_epoch
                     )
-                    assert extracted_ftso.submit_2
-                    votes = extracted_ftso.submit_2.parsed_payload.payload.values
-                    entity_votes.append(votes)
+                    if extracted_ftso.submit_2 is not None:
+                        votes = extracted_ftso.submit_2.parsed_payload.payload.values
+                        entity_votes.append(votes)
+                    else:
+                        entity_votes.append([None for _ in medians[0]])
                 # a new vote is expected every 90 seconds
                 while len(medians) > minimal_conditions.time_period.value // 90:
                     medians.popleft()

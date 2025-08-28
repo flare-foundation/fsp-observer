@@ -77,7 +77,7 @@ class MinimalConditions:
                 )
             )
         )
-        previous_expected_updates = round(
+        previous_expected_updates = (
             0.8
             * previous_number_of_updates
             * previous_normalized_weight
@@ -98,7 +98,7 @@ class MinimalConditions:
                 )
             )
         )
-        expected_updates = round(
+        expected_updates = (
             0.8 * number_of_updates * normalized_weight / total_active_weight
         )
 
