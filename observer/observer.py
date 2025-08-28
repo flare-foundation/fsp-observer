@@ -778,7 +778,7 @@ async def observer_loop(config: Configuration) -> None:
                         votes = extracted_ftso.submit_2.parsed_payload.payload.values
                         entity_votes.append(votes)
                     else:
-                        entity_votes.append([None for _ in medians[0]])
+                        entity_votes.append([])
                 # a new vote is expected every 90 seconds
                 while len(medians) > minimal_conditions.time_period.value // 90:
                     medians.popleft()

@@ -40,7 +40,7 @@ class MinimalConditions:
         for i in range(len(medians[0])):
             rounds_in_interval = 0
             for median_list, vote_list in zip(medians, votes):
-                if vote_list[i] is None:
+                if len(vote_list) < i + 1:
                     continue
                 vote = vote_list[i]
                 assert vote
