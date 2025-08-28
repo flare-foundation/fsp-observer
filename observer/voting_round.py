@@ -1,4 +1,5 @@
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import Self
 
 from attrs import define, field, frozen
@@ -89,6 +90,23 @@ class WParsedPayloadList[T]:
                 latest = wpp
 
         return latest
+
+    def extract_outside_of_bounds(
+        self, r: range
+    ) -> tuple[Sequence[WParsedPayload[T]], Sequence[WParsedPayload[T]]]:
+        before: Sequence[WParsedPayload[T]] = []
+        after: Sequence[WParsedPayload[T]] = []
+
+        for wpp in self.agg:
+            wtx = wpp.wtx_data
+
+            if wtx.timestamp < r.start:
+                before.append(wpp)
+
+            if wtx.timestamp >= r.stop:
+                after.append(wpp)
+
+        return before, after
 
 
 @define

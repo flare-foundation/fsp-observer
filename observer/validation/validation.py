@@ -70,6 +70,7 @@ def validate_round(
         ftso.check_submit_1,
         ftso.check_submit_2,
         ftso.check_submit_signatures,
+        ftso.check_tx_timing,
     )
 
     ftso_kwargs: ValidateFnKwargs[FtsoSubmit1, FtsoSubmit2, SubmitSignatures] = {
@@ -97,6 +98,7 @@ def validate_round(
         fdc.check_submit_1,
         fdc.check_submit_2,
         fdc.check_submit_signatures,
+        fdc.check_tx_timing,
     )
 
     fdc_kwargs: ValidateFnKwargs[FdcSubmit1, FdcSubmit2, SubmitSignatures] = {

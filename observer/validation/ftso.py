@@ -214,3 +214,82 @@ def check_submit_signatures(
             )
 
     return issues
+
+
+@_check_type
+def check_tx_timing(
+    message_builder: MessageBuilder,
+    entity: Entity,
+    round: VotingRound,
+    **_,
+) -> Sequence[Message]:
+    # NOTE: (miha) The protocol accepts the latest transaction sent in the correct time
+    # interval. We check if there are any transactions sent before or after this
+    # interval and send a warning for those before and a warning for those after
+    issues = []
+    mb = message_builder
+
+    epoch = round.voting_epoch
+    next = epoch.next
+    rd = next.reveal_deadline()
+
+    _submit_1 = round.ftso.submit_1.by_identity[entity.identity_address]
+    submit_1_before, submit_1_after = _submit_1.extract_outside_of_bounds(
+        range(epoch.start_s, epoch.end_s)
+    )
+    if len(submit_1_before) > 0:
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                f"submit 1 transactions sent before correct time interval: {submit_1_before}",  # noqa: E501
+            )
+        )
+    if len(submit_1_after) > 0:
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                f"submit 1 transactions sent after correct time interval: {submit_1_after}",  # noqa: E501
+            )
+        )
+
+    _submit_2 = round.ftso.submit_2.by_identity[entity.identity_address]
+    submit_2_before, submit_2_after = _submit_2.extract_outside_of_bounds(
+        range(next.start_s, rd)
+    )
+    if len(submit_2_before) > 0:
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                f"submit 2 transactions sent before correct time interval: {submit_2_before}",  # noqa: E501
+            )
+        )
+    if len(submit_2_after) > 0:
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                f"submit 2 transactions sent after correct time interval: {submit_2_after}",  # noqa: E501
+            )
+        )
+
+    _submit_signatures = round.ftso.submit_signatures.by_identity[
+        entity.identity_address
+    ]
+    submit_signatures_before, submit_signatures_after = (
+        _submit_signatures.extract_outside_of_bounds(range(rd, next.end_s))
+    )
+    if len(submit_signatures_before) > 0:
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                f"submit signatures transactions sent before correct time interval: {submit_signatures_before}",  # noqa: E501
+            )
+        )
+    if len(submit_signatures_after) > 0:
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                f"submit signatures transactions sent after correct time interval: {submit_signatures_after}",  # noqa: E501
+            )
+        )
+
+    return issues
