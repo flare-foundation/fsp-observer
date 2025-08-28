@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from attrs import define
 from eth_typing import ChecksumAddress
 
@@ -9,7 +11,7 @@ class ContractAddressManager:
     submission: ChecksumAddress
     relay: ChecksumAddress
 
-    def check_submission_address(self, address) -> list[Message]:
+    def check_submission_address(self, address) -> Sequence[Message]:
         mb = Message.builder()
         messages = []
         if address != self.submission:
@@ -18,7 +20,7 @@ class ContractAddressManager:
             )
         return messages
 
-    def check_relay_address(self, address) -> list[Message]:
+    def check_relay_address(self, address) -> Sequence[Message]:
         mb = Message.builder()
         messages = []
         if address != self.relay:

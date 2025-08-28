@@ -40,7 +40,7 @@ class MinimalConditions:
         for i in range(len(medians[0])):
             rounds_in_interval = 0
             for median_list, vote_list in zip(medians, votes):
-                if len(vote_list) < i + 1:
+                if len(vote_list) < i + 1 or vote_list[i] is None:
                     continue
                 vote = vote_list[i]
                 assert vote
@@ -142,7 +142,7 @@ class MinimalConditions:
                 messages.append(
                     mb.build(
                         MessageLevel.WARNING,
-                        f"Node {node} not meeting minimal condition for staking the in latest interval",  # noqa: E501
+                        f"Node {node} not meeting minimal condition for staking in the latest interval",  # noqa: E501
                     )
                 )
 

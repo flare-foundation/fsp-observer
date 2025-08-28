@@ -424,7 +424,8 @@ async def observer_loop(config: Configuration) -> None:
     fum = FastUpdatesManager()
     spm = SigningPolicyManager(signing_policy, signing_policy)
     cam = ContractAddressManager(
-        config.contracts.Submission.address, config.contracts.Relay.address
+        config.contracts.Submission.address,
+        config.contracts.Relay.address,
     )
     rm = RewardManager()
 
@@ -528,6 +529,8 @@ async def observer_loop(config: Configuration) -> None:
                             if e.protocol_id == 200:
                                 voting_round.fdc.finalization = e
 
+                            # this had to be sent to Relay
+                            # so we can check if the Relay address changed
                             entity = signing_policy.entity_mapper.by_identity_address[
                                 tia
                             ]
@@ -602,6 +605,7 @@ async def observer_loop(config: Configuration) -> None:
                             ):
                                 fum.fast_updates.popleft()
                             if un_prefix_0x(entity.signing_policy_address) == spa:
+                                # We check update array when we receive a new one
                                 event_messages.extend(
                                     fum.check_update_length(nr_of_feeds, fast_update_re)
                                 )
@@ -639,6 +643,7 @@ async def observer_loop(config: Configuration) -> None:
                 target_entity = signing_policy.entity_mapper.by_identity_address[tia]
 
                 if called_function_sig in target_function_signatures:
+                    # check if the Submission address is correct
                     if entity == target_entity:
                         tx_messages.extend(cam.check_submission_address(wtx.to_address))
                     mode = target_function_signatures[called_function_sig]
@@ -700,6 +705,7 @@ async def observer_loop(config: Configuration) -> None:
             messages.extend(event_messages)
             entity = signing_policy.entity_mapper.by_identity_address[tia]
 
+            # perform all minimal condition checks here and reset node connections
             if int(time.time() - last_minimal_conditions_check) > 60:
                 min_cond_messages: list[Message] = []
 
@@ -768,6 +774,7 @@ async def observer_loop(config: Configuration) -> None:
                 messages.extend(await cron(check_functions))
 
             rounds = vrm.finalize(block_data)
+            # prepare new data for anchor feeds
             if len(rounds) > 0:
                 medians.extend([round.ftso.medians for round in rounds])
                 for round in rounds:
@@ -786,10 +793,12 @@ async def observer_loop(config: Configuration) -> None:
             for r in rounds:
                 messages.extend(validate_round(r, signing_policy, entity, config))
 
+            # prepare new data for FDC participation
             signatures.extend([round.submitted_signatures for round in rounds])
             while len(signatures) > minimal_conditions.time_period.value // 90:
                 signatures.popleft()
 
+            # reporting on registration and preregistration
             if preregistration_started and not preregistered:
                 mb = Message.builder()
                 if int(time.time() - preregistration_started_ts) > 60:
