@@ -18,7 +18,7 @@ if __name__ == "__main__":
     try:
         config = get_config()
         main(config)
-    except ConfigError as ex:
+    except Exception as ex:
         log_message(
             get_notification_config(),
             Message.builder()
@@ -27,3 +27,4 @@ if __name__ == "__main__":
                 repr(ex),
             ),
         )
+    
