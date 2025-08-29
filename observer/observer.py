@@ -36,7 +36,7 @@ from observer.types import (
 from observer.validation.validation import validate_round
 
 from .message import Message, MessageLevel
-from .notification import notify_discord, notify_generic, notify_slack, notify_telegram
+from .notification import log_message
 from .voting_round import (
     VotingRoundManager,
     WTxData,
@@ -179,19 +179,6 @@ async def get_signing_policy_events(
     return builder.build()
 
 
-def log_message(config: Configuration, message: Message):
-    LOGGER.log(message.level.value, message.message)
-
-    n = config.notification
-
-    lvl_msg = f"{message.level.name} {message.message}"
-
-    notify_discord(n.discord, lvl_msg)
-    notify_slack(n.slack, lvl_msg)
-    notify_telegram(n.telegram, lvl_msg)
-    notify_generic(n.generic, message)
-
-
 async def cron(config: Configuration, w: AsyncWeb3, e: Entity) -> Sequence[Message]:
     mb = Message.builder()
     messages = []
@@ -277,7 +264,7 @@ async def observer_loop(config: Configuration) -> None:
     tia = w.to_checksum_address(config.identity_address)
     # TODO:(matej) log version and initial voting round, maybe signing policy info
     log_message(
-        config,
+        config.notification,
         Message.builder()
         .add(network=config.chain_id)
         .build(
@@ -494,6 +481,6 @@ async def observer_loop(config: Configuration) -> None:
                 messages.extend(validate_round(r, signing_policy, entity, config))
 
             for m in messages:
-                log_message(config, m)
+                log_message(config.notification, m)
 
         block_number = latest_block

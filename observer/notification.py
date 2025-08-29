@@ -1,8 +1,10 @@
+import logging
 from typing import Any
 
 import requests
 
 from configuration.types import (
+    Notification,
     NotificationDiscord,
     NotificationGeneric,
     NotificationSlack,
@@ -10,6 +12,19 @@ from configuration.types import (
 )
 
 from .message import Message
+
+LOGGER = logging.getLogger(__name__)
+
+
+def log_message(notification: Notification, message: Message):
+    LOGGER.log(message.level.value, message.message)
+
+    lvl_msg = f"{message.level.name} {message.message}"
+
+    notify_discord(notification.discord, lvl_msg)
+    notify_slack(notification.slack, lvl_msg)
+    notify_telegram(notification.telegram, lvl_msg)
+    notify_generic(notification.generic, message)
 
 
 def notify(
