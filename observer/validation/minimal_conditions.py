@@ -1,4 +1,5 @@
 from collections import deque
+from collections.abc import Sequence
 from enum import Enum
 from typing import Self
 
@@ -31,7 +32,7 @@ class MinimalConditions:
 
     def calculate_ftso_anchor_feeds(
         self, medians: deque[list[FtsoMedian]], votes: deque[list[int | None]]
-    ) -> list[Message]:
+    ) -> Sequence[Message]:
         mb = Message.builder()
         messages = []
         total_rounds = len(medians)
@@ -58,7 +59,7 @@ class MinimalConditions:
 
     def calculate_ftso_block_latency_feeds(
         self, entity: Entity, spm: SigningPolicyManager, fum: FastUpdatesManager
-    ) -> list[Message]:
+    ) -> Sequence[Message]:
         mb = Message.builder()
         messages = []
         previous_total_active_weight = sum(
@@ -134,7 +135,7 @@ class MinimalConditions:
 
     def calculate_staking(
         self, uptime_checks: int, node_connections: dict[str, int]
-    ) -> list[Message]:
+    ) -> Sequence[Message]:
         mb = Message.builder()
         messages = []
         for node in node_connections:
@@ -148,7 +149,7 @@ class MinimalConditions:
 
         return messages
 
-    def calculate_fdc_participation(self, signatures: deque[bool]) -> list[Message]:
+    def calculate_fdc_participation(self, signatures: deque[bool]) -> Sequence[Message]:
         mb = Message.builder()
         messages = []
         if len(signatures) > 0 and signatures.count(True) / len(signatures) < 0.8:
