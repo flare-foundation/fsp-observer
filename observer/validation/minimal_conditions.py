@@ -134,12 +134,12 @@ class MinimalConditions:
         return messages
 
     def calculate_staking(
-        self, uptime_checks: int, node_connections: dict[str, int]
+        self, uptime_checks: int, node_connections: dict[str, deque]
     ) -> Sequence[Message]:
         mb = Message.builder()
         messages = []
         for node in node_connections:
-            if node_connections[node] / uptime_checks < 0.8:
+            if node_connections[node].count(True) / uptime_checks < 0.8:
                 messages.append(
                     mb.build(
                         MessageLevel.WARNING,

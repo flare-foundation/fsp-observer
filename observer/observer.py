@@ -444,7 +444,7 @@ async def observer_loop(config: Configuration) -> None:
     last_minimal_conditions_check = int(time.time())
     last_ping = time.time()
 
-    node_connections = defaultdict(int)
+    node_connections = defaultdict(deque)
     uptime_validations = 0
 
     medians: deque[list[FtsoMedian]] = deque()
@@ -757,8 +757,6 @@ async def observer_loop(config: Configuration) -> None:
                         log_message(config, m)
 
                     last_minimal_conditions_check = int(time.time())
-                    uptime_validations = 0
-                    node_connections.clear()
 
                 payload = {
                     "jsonrpc": "2.0",
@@ -784,9 +782,16 @@ async def observer_loop(config: Configuration) -> None:
 
                             uptime_validations += 1
                             for node in result["result"]["validators"]:
-                                if node["connected"]:
-                                    node_connections[node["nodeID"]] += 1
+                                node_connections[node["nodeID"]].append(
+                                    node["connected"]
+                                )
                         last_ping = time.time()
+                        while (
+                            uptime_validations
+                            > minimal_conditions.time_period.value // 90
+                        ):
+                            for node in node_connections:
+                                node_connections[node].popleft()
 
                     except requests.RequestException as e:
                         LOGGER.warning(f"Error calling API: {e}")
