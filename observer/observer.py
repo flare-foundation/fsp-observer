@@ -776,6 +776,7 @@ async def observer_loop(config: Configuration) -> None:
                             uptime_validations
                             > minimal_conditions.time_period.value // 90
                         ):
+                            uptime_validations -= 1
                             for node in node_connections:
                                 node_connections[node].popleft()
 
