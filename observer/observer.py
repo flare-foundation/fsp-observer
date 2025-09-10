@@ -29,7 +29,7 @@ from configuration.types import (
     Configuration,
     un_prefix_0x,
 )
-from observer.contract_address_manager import ContractAddressManager
+from observer.contract_manager import ContractManager
 from observer.fast_updates_manager import FastUpdate, FastUpdatesManager
 from observer.reward_epoch_manager import (
     RewardManager,
@@ -407,26 +407,12 @@ async def observer_loop(config: Configuration) -> None:
     vrm = VotingRoundManager(voting_epoch.previous.id)
 
     # set up contracts and events (from config)
-    # TODO: (nejc) set this up with a function on class
-    # or contracts = attrs.asdict(config.contracts) <- this doesn't work
-    contracts = [
-        config.contracts.Relay,
-        config.contracts.VoterRegistry,
-        config.contracts.VoterPreRegistry,
-        config.contracts.FlareSystemsManager,
-        config.contracts.FlareSystemsCalculator,
-        config.contracts.FdcHub,
-        config.contracts.FastUpdater,
-        config.contracts.RewardManager,
-    ]
-    event_signatures = {e.signature: e for c in contracts for e in c.events.values()}
+    cm = ContractManager(config.contracts)
+    contracts = cm.get_contracts_list()
+    event_signatures = cm.get_events()
 
     fum = FastUpdatesManager()
     spm = SigningPolicyManager(signing_policy, signing_policy)
-    cam = ContractAddressManager(
-        config.contracts.Submission.address,
-        config.contracts.Relay.address,
-    )
     rm = RewardManager()
 
     # start listener
@@ -547,7 +533,7 @@ async def observer_loop(config: Configuration) -> None:
                                 if tx["from"] == entity.identity_address:
                                     relay_address = tx["to"]
                                     event_messages.extend(
-                                        cam.check_relay_address(relay_address)
+                                        cm.check_relay_address(relay_address)
                                     )
 
                             case "AttestationRequest":
@@ -669,7 +655,7 @@ async def observer_loop(config: Configuration) -> None:
                         # check if the Submission address is correct
                         if entity == target_entity:
                             tx_messages.extend(
-                                cam.check_submission_address(wtx.to_address)
+                                cm.check_submission_address(wtx.to_address)
                             )
                         mode = target_function_signatures[called_function_sig]
                         match mode:
