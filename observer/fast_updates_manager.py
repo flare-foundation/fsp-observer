@@ -63,11 +63,16 @@ class FastUpdatesManager:
             fu = fus[-1]
         else:
             return messages
-        if nr_of_feeds > 0 and len(fu.update_array) != nr_of_feeds:
+        rounded_nr_feeds = nr_of_feeds
+        # update arrays are multiples of 8, we need to round to the next largest
+        # if the number of feeds isn't already a multiple
+        if nr_of_feeds % 8 != 0:
+            rounded_nr_feeds = nr_of_feeds + (8 - nr_of_feeds % 8)
+        if rounded_nr_feeds > 0 and len(fu.update_array) != rounded_nr_feeds:
             messages.append(
                 mb.build(
                     level,
-                    f"Incorrect length of last update array, should be {nr_of_feeds} but got {len(fu.update_array)}",  # noqa: E501
+                    f"Incorrect length of last update array, should be {rounded_nr_feeds} but got {len(fu.update_array)}",  # noqa: E501
                 )
             )
         return messages
