@@ -6,6 +6,7 @@ from eth_typing import ChecksumAddress
 from web3 import AsyncWeb3
 
 from configuration.types import Configuration
+from observer.address import AddressChecker
 
 from .message import Message, MessageLevel
 
@@ -25,26 +26,9 @@ class FastUpdatesManager:
     async def check_addresses(
         self, config: Configuration, w: AsyncWeb3
     ) -> Sequence[Message]:
-        mb = Message.builder()
-        messages = []
+        addrs = [("fast updates address", address) for address in self.address_list]
 
-        addrs = (("fast updates address", address) for address in self.address_list)
-
-        for name, addr in addrs:
-            balance = await w.eth.get_balance(addr, "latest")
-            if balance < config.fee_threshold * 1e18:
-                level = MessageLevel.WARNING
-                if balance <= 5e18:
-                    level = MessageLevel.ERROR
-
-                messages.append(
-                    mb.build(
-                        level,
-                        f"low balance for {name} {addr} ({balance / 1e18:.4f} NAT)",
-                    )
-                )
-
-        return messages
+        return await AddressChecker.check_addresses(addrs, config, w)
 
     def check_update_length(
         self, nr_of_feeds: int, fast_update_re: int
@@ -64,15 +48,18 @@ class FastUpdatesManager:
         else:
             return messages
         rounded_nr_feeds = nr_of_feeds
-        # update arrays are multiples of 8, we need to round to the next largest
-        # if the number of feeds isn't already a multiple
+        # update arrays are whole bytes, so we need to round the number of feeds
+        # up to the nearest multiple of 8 if it is not one already
         if nr_of_feeds % 8 != 0:
             rounded_nr_feeds = nr_of_feeds + (8 - nr_of_feeds % 8)
         if rounded_nr_feeds > 0 and len(fu.update_array) != rounded_nr_feeds:
             messages.append(
                 mb.build(
                     level,
-                    f"Incorrect length of last update array, should be {rounded_nr_feeds} but got {len(fu.update_array)}",  # noqa: E501
+                    (
+                        "Incorrect length of last update array, should be"
+                        f" {rounded_nr_feeds} but got {len(fu.update_array)}"
+                    ),
                 )
             )
         return messages

@@ -4,11 +4,21 @@ import dotenv
 
 from configuration.config import get_config
 from configuration.types import Configuration
-from observer.observer import observer_loop
+from observer.message import Message, MessageLevel
+from observer.observer import log_message, observer_loop
 
 
 def main(config: Configuration):
-    asyncio.run(observer_loop(config))
+    try:
+        asyncio.run(observer_loop(config))
+    except Exception as e:
+        mb = Message.builder()
+        level = MessageLevel.CRITICAL
+        message = mb.build(
+            level,
+            (f"Observer crashed. Reason: {e}"),
+        )
+        log_message(config, message)
 
 
 if __name__ == "__main__":

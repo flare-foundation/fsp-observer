@@ -26,6 +26,7 @@ def _check_type(f: ValidateFn[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]):
 def check_submit_1(
     submit_1: WParsedPayload[FtsoSubmit1] | None,
     message_builder: MessageBuilder,
+    extracted_round,
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -36,6 +37,9 @@ def check_submit_1(
     # we perform the following checks:
     # - submit1 doesn't exist -> error
     # - submit1 exists but commit hash length isn't 32 -> error
+    # NOTE: (miha) The protocol accepts the latest submit1 sent in the correct
+    # time interval. We check if there are any submit1 sent before or after interval
+    # and send a warning for those before and a warning for those after
 
     if submit_1 is None:
         issues.append(mb.build(MessageLevel.ERROR, "no submit1 transaction"))
@@ -49,6 +53,26 @@ def check_submit_1(
                     f"submit1 commit hash unexpeted length ({hash_len}), expected 32",
                 )
             )
+        if len(extracted_round.submit_1_before) > 0:
+            issues.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "submit 1 transactions sent before correct time interval: "
+                        f"{extracted_round.submit_2_before}"
+                    ),
+                )
+            )
+        if len(extracted_round.submit_1_after) > 0:
+            issues.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "submit 1 transactions sent after correct time interval: "
+                        f"{extracted_round.submit_2_after}"
+                    ),
+                )
+            )
 
     return issues
 
@@ -60,6 +84,7 @@ def check_submit_2(
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
+    extracted_round,
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -76,6 +101,9 @@ def check_submit_2(
     # - ftso values have null values -> warning
     # - ftso value have values that aren't in range of minimal conditions -> warning
     # - ftso values have incorrect length -> warning
+    # NOTE: (miha) The protocol accepts the latest submit2 sent in the correct
+    # time interval. We check if there are any submit2 sent before or after interval
+    # and send a warning for those before and a warning for those after
 
     if submit_1 is None and submit_2 is None:
         issues.append(mb.build(MessageLevel.ERROR, "no submit2 transaction"))
@@ -153,6 +181,27 @@ def check_submit_2(
             #         )
             #     )
 
+        if len(extracted_round.submit_2_before) > 0:
+            issues.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "submit 2 transactions sent before correct time interval: "
+                        f"{extracted_round.submit_2_before}"
+                    ),
+                )
+            )
+        if len(extracted_round.submit_2_after) > 0:
+            issues.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "submit 2 transactions sent after correct time interval: "
+                        f"{extracted_round.submit_2_after}"
+                    ),
+                )
+            )
+
     return issues
 
 
@@ -163,6 +212,7 @@ def check_submit_signatures(
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
+    extracted_round,
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -177,6 +227,9 @@ def check_submit_signatures(
     # - submitSignatures doesn't exist -> error
     # - submitSignature was sent after the deadline -> warning
     # - signature doesn't match finalization -> error
+    # NOTE: (miha) The protocol accepts the latest submitSignatures sent in the correct
+    # time interval. We check if there are any submitSignatures sent before or after
+    # this interval and send a warning for those before and a warning for those after
 
     if submit_signatures is None:
         issues.append(
@@ -197,6 +250,27 @@ def check_submit_signatures(
                 )
             )
 
+        if len(extracted_round.submit_signatures_before) > 0:
+            issues.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "submit signatures transactions sent before correct time "
+                        f"interval: {extracted_round.submit_signatures_before}"
+                    ),
+                )
+            )
+        if len(extracted_round.submit_signatures_after) > 0:
+            issues.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "submit signatures transactions sent after correct time "
+                        f"interval: {extracted_round.submit_signatures_after}"
+                    ),
+                )
+            )
+
     if submit_signatures is not None and finalization is not None:
         s = Signature.from_parsed_signature(
             submit_signatures.parsed_payload.payload.signature
@@ -212,84 +286,5 @@ def check_submit_signatures(
                     "submitSignatures signature doesn't match finalization",
                 ),
             )
-
-    return issues
-
-
-@_check_type
-def check_tx_timing(
-    message_builder: MessageBuilder,
-    entity: Entity,
-    round: VotingRound,
-    **_,
-) -> Sequence[Message]:
-    # NOTE: (miha) The protocol accepts the latest transaction sent in the correct time
-    # interval. We check if there are any transactions sent before or after this
-    # interval and send a warning for those before and a warning for those after
-    issues = []
-    mb = message_builder
-
-    epoch = round.voting_epoch
-    next = epoch.next
-    rd = next.reveal_deadline()
-
-    _submit_1 = round.ftso.submit_1.by_identity[entity.identity_address]
-    submit_1_before, submit_1_after = _submit_1.extract_outside_of_bounds(
-        range(epoch.start_s, epoch.end_s)
-    )
-    if len(submit_1_before) > 0:
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                f"submit 1 transactions sent before correct time interval: {submit_1_before}",  # noqa: E501
-            )
-        )
-    if len(submit_1_after) > 0:
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                f"submit 1 transactions sent after correct time interval: {submit_1_after}",  # noqa: E501
-            )
-        )
-
-    _submit_2 = round.ftso.submit_2.by_identity[entity.identity_address]
-    submit_2_before, submit_2_after = _submit_2.extract_outside_of_bounds(
-        range(next.start_s, rd)
-    )
-    if len(submit_2_before) > 0:
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                f"submit 2 transactions sent before correct time interval: {submit_2_before}",  # noqa: E501
-            )
-        )
-    if len(submit_2_after) > 0:
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                f"submit 2 transactions sent after correct time interval: {submit_2_after}",  # noqa: E501
-            )
-        )
-
-    _submit_signatures = round.ftso.submit_signatures.by_identity[
-        entity.identity_address
-    ]
-    submit_signatures_before, submit_signatures_after = (
-        _submit_signatures.extract_outside_of_bounds(range(rd, next.end_s))
-    )
-    if len(submit_signatures_before) > 0:
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                f"submit signatures transactions sent before correct time interval: {submit_signatures_before}",  # noqa: E501
-            )
-        )
-    if len(submit_signatures_after) > 0:
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                f"submit signatures transactions sent after correct time interval: {submit_signatures_after}",  # noqa: E501
-            )
-        )
 
     return issues

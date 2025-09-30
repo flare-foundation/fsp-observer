@@ -22,8 +22,14 @@ from .types import ValidateFn, ValidateFnKwargs
 @frozen
 class ExtractedEntityVotingRound[S1, S2, SS]:
     submit_1: WParsedPayload[S1] | None
+    submit_1_before: Sequence[WParsedPayload[S1]]
+    submit_1_after: Sequence[WParsedPayload[S1]]
     submit_2: WParsedPayload[S2] | None
+    submit_2_before: Sequence[WParsedPayload[S2]]
+    submit_2_after: Sequence[WParsedPayload[S2]]
     submit_signatures: WParsedPayload[SS] | None
+    submit_signatures_before: Sequence[WParsedPayload[SS]]
+    submit_signatures_after: Sequence[WParsedPayload[SS]]
 
 
 def extract_round_for_entity[S1, S2, S3](
@@ -34,15 +40,32 @@ def extract_round_for_entity[S1, S2, S3](
 
     _submit_1 = r.submit_1.by_identity[e.identity_address]
     submit_1 = _submit_1.extract_latest(range(epoch.start_s, epoch.end_s))
+    submit_1_before, submit_1_after = _submit_1.extract_outside_of_bounds(
+        range(epoch.start_s, epoch.end_s)
+    )
 
     _submit_2 = r.submit_2.by_identity[e.identity_address]
     submit_2 = _submit_2.extract_latest(range(next.start_s, rd))
+    submit_2_before, submit_2_after = _submit_2.extract_outside_of_bounds(
+        range(next.start_s, rd)
+    )
 
     _submit_signatures = r.submit_signatures.by_identity[e.identity_address]
     submit_signatures = _submit_signatures.extract_latest(range(rd, next.end_s))
+    submit_signatures_before, submit_signatures_after = (
+        _submit_signatures.extract_outside_of_bounds(range(rd, next.end_s))
+    )
 
     return ExtractedEntityVotingRound(
-        submit_1=submit_1, submit_2=submit_2, submit_signatures=submit_signatures
+        submit_1=submit_1,
+        submit_2=submit_2,
+        submit_signatures=submit_signatures,
+        submit_1_before=submit_1_before,
+        submit_1_after=submit_1_after,
+        submit_2_before=submit_2_before,
+        submit_2_after=submit_2_after,
+        submit_signatures_before=submit_signatures_before,
+        submit_signatures_after=submit_signatures_after,
     )
 
 
@@ -70,7 +93,6 @@ def validate_round(
         ftso.check_submit_1,
         ftso.check_submit_2,
         ftso.check_submit_signatures,
-        ftso.check_tx_timing,
     )
 
     ftso_kwargs: ValidateFnKwargs[FtsoSubmit1, FtsoSubmit2, SubmitSignatures] = {
@@ -98,7 +120,6 @@ def validate_round(
         fdc.check_submit_1,
         fdc.check_submit_2,
         fdc.check_submit_signatures,
-        fdc.check_tx_timing,
     )
 
     fdc_kwargs: ValidateFnKwargs[FdcSubmit1, FdcSubmit2, SubmitSignatures] = {

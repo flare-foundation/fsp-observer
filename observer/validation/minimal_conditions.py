@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Self
 
+from attrs import frozen
 from py_flare_common.ftso.median import FtsoMedian
 
 from observer.fast_updates_manager import FastUpdatesManager
@@ -15,6 +16,13 @@ class Interval(Enum):
     LAST_2_HOURS = 2 * 60 * 60
     LAST_4_HOURS = 4 * 60 * 60
     LAST_6_HOURS = 6 * 60 * 60
+
+
+@frozen
+class MinimalConditionsConfig:
+    lower_percentile = 0.995
+    upper_percentile = 1.005
+    threshold = 0.8
 
 
 class MinimalConditions:
@@ -45,13 +53,22 @@ class MinimalConditions:
                     continue
                 vote = vote_list[i]
                 assert vote
-                if 0.995 * median_list[i].value <= vote <= 1.005 * median_list[i].value:
+                if (
+                    MinimalConditionsConfig.lower_percentile * median_list[i].value
+                    <= vote
+                    <= MinimalConditionsConfig.upper_percentile * median_list[i].value
+                ):
                     rounds_in_interval += 1
-            if rounds_in_interval / total_rounds < 0.8:
+            success_rate = rounds_in_interval / total_rounds
+            if success_rate < MinimalConditionsConfig.threshold:
                 messages.append(
                     mb.build(
                         MessageLevel.WARNING,
-                        f"Not meeting minimal condition for FTSO anchor feed in the latest interval, feed index: {i}",  # noqa: E501
+                        (
+                            "Not meeting minimal condition for FTSO anchor feed "
+                            f"in the latest interval, feed index: {i}, "
+                            f"success rate: {success_rate}"
+                        ),
                     )
                 )
 
@@ -79,7 +96,7 @@ class MinimalConditions:
             )
         )
         previous_expected_updates = (
-            0.8
+            MinimalConditionsConfig.threshold
             * previous_number_of_updates
             * previous_normalized_weight
             / previous_total_active_weight
@@ -100,7 +117,10 @@ class MinimalConditions:
             )
         )
         expected_updates = (
-            0.8 * number_of_updates * normalized_weight / total_active_weight
+            MinimalConditionsConfig.threshold
+            * number_of_updates
+            * normalized_weight
+            / total_active_weight
         )
 
         previous_actual_updates = len(
@@ -128,7 +148,10 @@ class MinimalConditions:
             messages.append(
                 mb.build(
                     MessageLevel.WARNING,
-                    "Not meeting minimal condition for fast updates in the latest interval",  # noqa: E501
+                    (
+                        "Not meeting minimal condition for fast updates "
+                        "in the latest interval"
+                    ),
                 )
             )
         return messages
@@ -139,11 +162,17 @@ class MinimalConditions:
         mb = Message.builder()
         messages = []
         for node in node_connections:
-            if node_connections[node].count(True) / uptime_checks < 0.8:
+            if (
+                node_connections[node].count(True) / uptime_checks
+                < MinimalConditionsConfig.threshold
+            ):
                 messages.append(
                     mb.build(
                         MessageLevel.WARNING,
-                        f"Node {node} not meeting minimal condition for staking in the latest interval",  # noqa: E501
+                        (
+                            f"Node {node} not meeting minimal condition for "
+                            "staking in the latest interval"
+                        ),
                     )
                 )
 
@@ -152,11 +181,18 @@ class MinimalConditions:
     def calculate_fdc_participation(self, signatures: deque[bool]) -> Sequence[Message]:
         mb = Message.builder()
         messages = []
-        if len(signatures) > 0 and signatures.count(True) / len(signatures) < 0.8:
+        if (
+            len(signatures) > 0
+            and signatures.count(True) / len(signatures)
+            < MinimalConditionsConfig.threshold
+        ):
             messages.append(
                 mb.build(
                     MessageLevel.WARNING,
-                    "Not meeting minimal condition for FDC participation in the latest interval",  # noqa: E501
+                    (
+                        "Not meeting minimal condition for FDC participation "
+                        "in the latest interval"
+                    ),
                 )
             )
 

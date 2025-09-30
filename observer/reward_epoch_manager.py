@@ -7,6 +7,7 @@ from py_flare_common.fsp.epoch.epoch import RewardEpoch
 from web3 import AsyncWeb3
 
 from configuration.types import Configuration
+from observer.address import AddressChecker
 
 from .message import Message, MessageLevel
 from .types import (
@@ -50,30 +51,13 @@ class Entity:
     async def check_addresses(
         self, config: Configuration, w: AsyncWeb3
     ) -> Sequence[Message]:
-        mb = Message.builder()
-        messages = []
-
-        addrs = (
+        addrs = [
             ("submit", self.submit_address),
             ("submit signatures", self.submit_signatures_address),
             ("signing policy", self.signing_policy_address),
-        )
+        ]
 
-        for name, addr in addrs:
-            balance = await w.eth.get_balance(addr, "latest")
-            if balance < config.fee_threshold * 1e18:
-                level = MessageLevel.WARNING
-                if balance <= 5e18:
-                    level = MessageLevel.ERROR
-
-                messages.append(
-                    mb.build(
-                        level,
-                        f"low balance for {name} address ({balance / 1e18:.4f} NAT)",
-                    )
-                )
-
-        return messages
+        return await AddressChecker.check_addresses(addrs, config, w)
 
 
 @frozen
@@ -291,7 +275,10 @@ class RewardManager:
                         messages.append(
                             mb.build(
                                 MessageLevel.WARNING,
-                                f"Unclaimed rewards in reward epoch {re}, claim type {claim_type}, amount {state[1]}",  # noqa: E501
+                                (
+                                    f"Unclaimed rewards in reward epoch {re},"
+                                    f" claim type {claim_type}, amount {state[1]}"
+                                ),
                             )
                         )
         return messages

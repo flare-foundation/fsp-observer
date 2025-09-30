@@ -1,17 +1,18 @@
+import asyncio
 import hashlib
 import logging
 import time
 from collections import defaultdict, deque
-from collections.abc import Sequence
-from types import CoroutineType
-from typing import Any, Self, Union
+from collections.abc import Awaitable, Sequence
+from itertools import chain
+from typing import Any, Self
 
 import requests
-from base58 import BITCOIN_ALPHABET, b58encode, scrub_input
 from eth_abi.abi import encode
 from eth_account._utils.signing import to_standard_v
 from eth_account.messages import _hash_eip191_message, encode_defunct
 from eth_keys.datatypes import Signature as EthSignature
+from py_flare_common.b58 import flare_b58_encode_check
 from py_flare_common.fsp.epoch.epoch import RewardEpoch
 from py_flare_common.fsp.messaging import (
     parse_submit1_tx,
@@ -66,24 +67,9 @@ logging.basicConfig(
 )
 
 
-def avalanche_b58_encode_check(
-    v: Union[str, bytes],
-    alphabet: bytes = BITCOIN_ALPHABET,
-) -> bytes:
-    """
-    Encode a string using Base58 with a 4 character checksum like in avalanche
-    and not like in spec
-    https://github.com/flare-foundation/go-flare/blob/93fd844b1e85366ee9c1c4a3fb9e9399220534cc/avalanchego/utils/hashing/hashing.go#L78-L81
-    """
-    v = scrub_input(v)
-
-    digest = hashlib.sha256(v).digest()
-    return b58encode(v + digest[-4:], alphabet=alphabet)
-
-
 def node_id_to_representation(node_id):
     decoded = bytes.fromhex(node_id)
-    return f"NodeID-{avalanche_b58_encode_check(decoded).decode()}"
+    return f"NodeID-{flare_b58_encode_check(decoded).decode()}"
 
 
 class Signature(EthSignature):
@@ -296,12 +282,11 @@ def log_message(config: Configuration, message: Message):
 
 
 async def cron(
-    check_functions: Sequence[CoroutineType[Any, Any, Sequence[Message]]],
+    check_functions: Sequence[Awaitable[Sequence[Message]]],
 ) -> Sequence[Message]:
-    messages: list[Message] = []
-    for func in check_functions:
-        messages.extend(await func)
-    return messages
+    results = await asyncio.gather(*check_functions)
+
+    return list(chain.from_iterable(results))
 
 
 async def observer_loop(config: Configuration) -> None:
@@ -450,404 +435,380 @@ async def observer_loop(config: Configuration) -> None:
     fast_update_re: int = 0
 
     while True:
-        try:
-            latest_block = await w.eth.block_number
-            if block_number == latest_block:
-                time.sleep(2)
-                continue
+        latest_block = await w.eth.block_number
+        if block_number == latest_block:
+            time.sleep(2)
+            continue
 
-            for block in range(block_number, latest_block):
-                LOGGER.debug(f"processing {block}")
-                block_data = await w.eth.get_block(block, full_transactions=True)
-                assert "transactions" in block_data
-                assert "timestamp" in block_data
-                block_ts = block_data["timestamp"]
+        for block in range(block_number, latest_block):
+            LOGGER.debug(f"processing {block}")
+            block_data = await w.eth.get_block(block, full_transactions=True)
+            assert "transactions" in block_data
+            assert "timestamp" in block_data
+            block_ts = block_data["timestamp"]
 
-                voting_epoch = vef.from_timestamp(block_ts)
+            voting_epoch = vef.from_timestamp(block_ts)
 
-                if (
-                    spb.signing_policy_initialized is not None
-                    and spb.signing_policy_initialized.start_voting_round_id
-                    == voting_epoch.id
-                ):
-                    # TODO:(matej) this could fail if the observer is started during
-                    # last two hours of the reward epoch
-                    voter_registration_started = False
-                    registered = False
-                    spm.previous_policy = signing_policy
-                    signing_policy = spb.build()
-                    spm.current_policy = signing_policy
+            if (
+                spb.signing_policy_initialized is not None
+                and spb.signing_policy_initialized.start_voting_round_id
+                == voting_epoch.id
+            ):
+                # TODO:(matej) this could fail if the observer is started during
+                # last two hours of the reward epoch
+                voter_registration_started = False
+                registered = False
+                spm.previous_policy = signing_policy
+                signing_policy = spb.build()
+                spm.current_policy = signing_policy
 
-                    spb = SigningPolicy.builder().for_epoch(
-                        signing_policy.reward_epoch.next
-                    )
-
-                    minimal_conditions.reward_epoch_id = signing_policy.reward_epoch.id
-
-                    entity = signing_policy.entity_mapper.by_identity_address[tia]
-                    unclaimed_rewards = await rm.get_unclaimed_rewards(
-                        entity, config, w
-                    )
-                    for m in unclaimed_rewards:
-                        log_message(config, m)
-
-                block_logs = await w.eth.get_logs(
-                    {
-                        "address": [contract.address for contract in contracts],
-                        "fromBlock": block,
-                        "toBlock": block,
-                    }
+                spb = SigningPolicy.builder().for_epoch(
+                    signing_policy.reward_epoch.next
                 )
 
-                tx_messages = []
-                event_messages = []
-                for log in block_logs:
-                    sig = log["topics"][0]
+                minimal_conditions.reward_epoch_id = signing_policy.reward_epoch.id
 
-                    if sig.hex() in event_signatures:
-                        event = event_signatures[sig.hex()]
-                        data = get_event_data(w.eth.codec, event.abi, log)
-                        match event.name:
-                            case "ProtocolMessageRelayed":
-                                e = ProtocolMessageRelayed.from_dict(
-                                    data["args"], block_data
-                                )
-                                voting_round = vrm.get(ve(e.voting_round_id))
-                                if e.protocol_id == 100:
-                                    voting_round.ftso.finalization = e
-                                if e.protocol_id == 200:
-                                    voting_round.fdc.finalization = e
-
-                                # this had to be sent to Relay
-                                # so we can check if the Relay address changed
-                                entity = (
-                                    signing_policy.entity_mapper.by_identity_address[
-                                        tia
-                                    ]
-                                )
-                                tx = await w.eth.get_transaction(
-                                    data["transactionHash"]
-                                )
-                                assert "to" in tx
-                                assert "from" in tx
-                                if tx["from"] == entity.identity_address:
-                                    relay_address = tx["to"]
-                                    event_messages.extend(
-                                        cm.check_relay_address(relay_address)
-                                    )
-
-                            case "AttestationRequest":
-                                e = AttestationRequest.from_dict(data, voting_epoch)
-                                vrm.get(e.voting_epoch_id).fdc.requests.agg.append(e)
-
-                            case "SigningPolicyInitialized":
-                                e = SigningPolicyInitialized.from_dict(data["args"])
-                                spb.add(e)
-                            case "VoterRegistered":
-                                e = VoterRegistered.from_dict(data["args"])
-                                spb.add(e)
-                                entity = (
-                                    signing_policy.entity_mapper.by_identity_address[
-                                        tia
-                                    ]
-                                )
-                                if (
-                                    entity.signing_policy_address
-                                    == e.signing_policy_address
-                                ):
-                                    registered = True
-                            case "VoterRemoved":
-                                e = VoterRemoved.from_dict(data["args"])
-                                spb.add(e)
-                            case "VoterRegistrationInfo":
-                                e = VoterRegistrationInfo.from_dict(data["args"])
-                                spb.add(e)
-                            case "VotePowerBlockSelected":
-                                preregistration_started = False
-                                preregistered = False
-                                e = VotePowerBlockSelected.from_dict(data["args"])
-                                spb.add(e)
-                                voter_registration_started = True
-                                voter_registration_started_ts = int(time.time())
-                            case "RandomAcquisitionStarted":
-                                e = RandomAcquisitionStarted.from_dict(data["args"])
-                                spb.add(e)
-                                preregistration_started = True
-                                preregistration_started_ts = int(time.time())
-                            case "FastUpdateFeedsSubmitted":
-                                e = FastUpdateFeedsSubmitted.from_dict(
-                                    data["args"],
-                                    data["address"],
-                                    data["transactionHash"],
-                                )
-                                tx = await w.eth.get_transaction(e.transaction_hash)
-                                spa, address, update_array = calculate_update_from_tx(
-                                    config, w, tx
-                                )
-                                entity = (
-                                    signing_policy.entity_mapper.by_identity_address[
-                                        tia
-                                    ]
-                                )
-                                fum.fast_updates.append(
-                                    FastUpdate(
-                                        signing_policy.reward_epoch.id,
-                                        address,
-                                        update_array,
-                                    )
-                                )
-                                # with expected sample size 1 and average block time of
-                                # 1s, this should be an ok approximation
-                                if (
-                                    len(fum.fast_updates)
-                                    > minimal_conditions.time_period.value
-                                ):
-                                    fum.fast_updates.popleft()
-                                if un_prefix_0x(entity.signing_policy_address) == spa:
-                                    # We check update array when we receive a new one
-                                    event_messages.extend(
-                                        fum.check_update_length(
-                                            nr_of_feeds, fast_update_re
-                                        )
-                                    )
-                                    fum.address_list.add(address)
-                            case "FastUpdateFeeds":
-                                e = FastUpdateFeeds.from_dict(
-                                    data["args"],
-                                    data["address"],
-                                    data["transactionHash"],
-                                )
-                                nr_of_feeds, fast_update_re = (
-                                    len(e.feeds),
-                                    ref.from_voting_epoch(
-                                        vef.make_epoch(e.voting_round_id)
-                                    ).id,
-                                )
-                            case "VoterPreRegistered":
-                                e = VoterPreRegistered.from_dict(
-                                    data["args"],
-                                    data["address"],
-                                    data["transactionHash"],
-                                )
-                                entity = (
-                                    signing_policy.entity_mapper.by_identity_address[
-                                        tia
-                                    ]
-                                )
-                                if tia == e.voter:
-                                    preregistered = True
-
-                for tx in block_data["transactions"]:
-                    assert not isinstance(tx, bytes)
-                    wtx = WTxData.from_tx_data(tx, block_data)
-
-                    called_function_sig = wtx.input[:4].hex()
-                    input = wtx.input[4:].hex()
-                    sender_address = wtx.from_address
-                    entity = signing_policy.entity_mapper.by_omni.get(sender_address)
-                    if entity is None:
-                        continue
-                    target_entity = signing_policy.entity_mapper.by_identity_address[
-                        tia
-                    ]
-
-                    if called_function_sig in target_function_signatures:
-                        # check if the Submission address is correct
-                        if entity == target_entity:
-                            tx_messages.extend(
-                                cm.check_submission_address(wtx.to_address)
-                            )
-                        mode = target_function_signatures[called_function_sig]
-                        match mode:
-                            case "submit1":
-                                try:
-                                    parsed = parse_submit1_tx(input)
-                                    if parsed.ftso is not None:
-                                        vrm.get(
-                                            ve(parsed.ftso.voting_round_id)
-                                        ).ftso.insert_submit_1(entity, parsed.ftso, wtx)
-                                    if parsed.fdc is not None:
-                                        vrm.get(
-                                            ve(parsed.fdc.voting_round_id)
-                                        ).fdc.insert_submit_1(entity, parsed.fdc, wtx)
-                                except Exception:
-                                    pass
-
-                            case "submit2":
-                                try:
-                                    parsed = parse_submit2_tx(input)
-                                    if parsed.ftso is not None:
-                                        vrm.get(
-                                            ve(parsed.ftso.voting_round_id)
-                                        ).ftso.insert_submit_2(entity, parsed.ftso, wtx)
-                                    if parsed.fdc is not None:
-                                        vrm.get(
-                                            ve(parsed.fdc.voting_round_id)
-                                        ).fdc.insert_submit_2(entity, parsed.fdc, wtx)
-                                except Exception:
-                                    pass
-
-                            case "submitSignatures":
-                                try:
-                                    parsed = parse_submit_signature_tx(input)
-                                    if parsed.ftso is not None:
-                                        vrm.get(
-                                            ve(parsed.ftso.voting_round_id)
-                                        ).ftso.insert_submit_signatures(
-                                            entity, parsed.ftso, wtx
-                                        )
-                                    if parsed.fdc is not None:
-                                        vr = vrm.get(ve(parsed.fdc.voting_round_id))
-                                        vr.fdc.insert_submit_signatures(
-                                            entity, parsed.fdc, wtx
-                                        )
-
-                                        # NOTE:(matej) this is currently the easiest
-                                        # way to get consensus bitvote
-                                        vr.fdc.consensus_bitvote[
-                                            parsed.fdc.payload.unsigned_message
-                                        ] += 1
-
-                                except Exception:
-                                    pass
-
-                messages: list[Message] = []
-                messages.extend(tx_messages)
-                messages.extend(event_messages)
                 entity = signing_policy.entity_mapper.by_identity_address[tia]
-
-                # perform all minimal condition checks here and reset node connections
-                if int(time.time() - last_minimal_conditions_check) > 60:
-                    min_cond_messages: list[Message] = []
-
-                    min_cond_messages.extend(
-                        minimal_conditions.calculate_ftso_block_latency_feeds(
-                            entity, spm, fum
-                        )
-                    )
-                    min_cond_messages.extend(
-                        minimal_conditions.calculate_ftso_anchor_feeds(
-                            medians, entity_votes
-                        )
-                    )
-                    min_cond_messages.extend(
-                        minimal_conditions.calculate_staking(
-                            uptime_validations, node_connections
-                        )
-                    )
-                    min_cond_messages.extend(
-                        minimal_conditions.calculate_fdc_participation(signatures)
-                    )
-
-                    for m in min_cond_messages:
-                        log_message(config, m)
-
-                    last_minimal_conditions_check = int(time.time())
-
-                payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "platform.getCurrentValidators",
-                    "params": {
-                        "nodeIDs": [
-                            node_id_to_representation(node.node_id)
-                            for node in entity.nodes
-                        ]
-                    },
-                }
-                if int(time.time() - last_ping) > 90:
-                    try:
-                        if len([node.node_id for node in entity.nodes]) > 0:
-                            response = requests.post(
-                                config.p_chain_rpc_url, json=payload, timeout=10
-                            )
-                            response.raise_for_status()
-                            result = response.json()
-                            if "error" in result:
-                                LOGGER.warning("Error calling API: check params")
-
-                            uptime_validations += 1
-                            for node in result["result"]["validators"]:
-                                node_connections[node["nodeID"]].append(
-                                    node["connected"]
-                                )
-                        last_ping = time.time()
-                        while (
-                            uptime_validations
-                            > minimal_conditions.time_period.value // 90
-                        ):
-                            uptime_validations -= 1
-                            for node in node_connections:
-                                node_connections[node].popleft()
-
-                    except requests.RequestException as e:
-                        LOGGER.warning(f"Error calling API: {e}")
-                        last_ping = time.time()
-
-                if int(time.time() - cron_time) < 60 * 60:
-                    check_functions = [
-                        entity.check_addresses(config, w),
-                        fum.check_addresses(config, w),
-                    ]
-                    messages.extend(await cron(check_functions))
-
-                rounds = vrm.finalize(block_data)
-                # prepare new data for anchor feeds
-                if len(rounds) > 0:
-                    medians.extend([round.ftso.medians for round in rounds])
-                    for round in rounds:
-                        extracted_ftso = extract_round_for_entity(
-                            round.ftso, entity, round.voting_epoch
-                        )
-                        if extracted_ftso.submit_2 is not None:
-                            votes = (
-                                extracted_ftso.submit_2.parsed_payload.payload.values
-                            )
-                            entity_votes.append(votes)
-                        else:
-                            entity_votes.append([])
-                    # a new vote is expected every 90 seconds
-                    while len(medians) > minimal_conditions.time_period.value // 90:
-                        medians.popleft()
-                        entity_votes.popleft()
-                for r in rounds:
-                    messages.extend(validate_round(r, signing_policy, entity, config))
-
-                # prepare new data for FDC participation
-                signatures.extend([round.submitted_signatures for round in rounds])
-                while len(signatures) > minimal_conditions.time_period.value // 90:
-                    signatures.popleft()
-
-                # reporting on registration and preregistration
-                if preregistration_started and not preregistered:
-                    mb = Message.builder()
-                    if int(time.time() - preregistration_started_ts) > 60:
-                        level = MessageLevel.CRITICAL
-                        message = mb.build(
-                            level,
-                            f"Voter not preregistered after {int(time.time() - preregistration_started_ts) // 60} minutes",  # noqa: E501
-                        )
-                        messages.append(message)
-
-                if voter_registration_started and not registered:
-                    mb = Message.builder()
-                    if int(time.time() - voter_registration_started_ts) > 60:
-                        level = MessageLevel.CRITICAL
-                        message = mb.build(
-                            level,
-                            f"Voter not registered after {int(time.time() - voter_registration_started_ts) // 60} minutes",  # noqa: E501
-                        )
-                        messages.append(message)
-
-                for m in messages:
+                unclaimed_rewards = await rm.get_unclaimed_rewards(entity, config, w)
+                for m in unclaimed_rewards:
                     log_message(config, m)
 
-            block_number = latest_block
-
-        except Exception as e:
-            mb = Message.builder()
-            message = mb.build(
-                MessageLevel.CRITICAL,
-                f"Observer crashed. Reason: {e}",
+            block_logs = await w.eth.get_logs(
+                {
+                    "address": [contract.address for contract in contracts],
+                    "fromBlock": block,
+                    "toBlock": block,
+                }
             )
-            log_message(config, message)
+
+            tx_messages = []
+            event_messages = []
+            for log in block_logs:
+                sig = log["topics"][0]
+
+                if sig.hex() in event_signatures:
+                    event = event_signatures[sig.hex()]
+                    data = get_event_data(w.eth.codec, event.abi, log)
+                    match event.name:
+                        case "ProtocolMessageRelayed":
+                            e = ProtocolMessageRelayed.from_dict(
+                                data["args"], block_data
+                            )
+                            voting_round = vrm.get(ve(e.voting_round_id))
+                            if e.protocol_id == 100:
+                                voting_round.ftso.finalization = e
+                            if e.protocol_id == 200:
+                                voting_round.fdc.finalization = e
+
+                            # this had to be sent to Relay
+                            # so we can check if the Relay address changed
+                            entity = signing_policy.entity_mapper.by_identity_address[
+                                tia
+                            ]
+                            tx = await w.eth.get_transaction(data["transactionHash"])
+                            assert "to" in tx
+                            assert "from" in tx
+                            if tx["from"] == entity.identity_address:
+                                relay_address = tx["to"]
+                                event_messages.extend(
+                                    cm.check_relay_address(relay_address)
+                                )
+
+                        case "AttestationRequest":
+                            e = AttestationRequest.from_dict(data, voting_epoch)
+                            vrm.get(e.voting_epoch_id).fdc.requests.agg.append(e)
+
+                        case "SigningPolicyInitialized":
+                            e = SigningPolicyInitialized.from_dict(data["args"])
+                            spb.add(e)
+                        case "VoterRegistered":
+                            e = VoterRegistered.from_dict(data["args"])
+                            spb.add(e)
+                            entity = signing_policy.entity_mapper.by_identity_address[
+                                tia
+                            ]
+                            if (
+                                entity.signing_policy_address
+                                == e.signing_policy_address
+                            ):
+                                registered = True
+                        case "VoterRemoved":
+                            e = VoterRemoved.from_dict(data["args"])
+                            spb.add(e)
+                        case "VoterRegistrationInfo":
+                            e = VoterRegistrationInfo.from_dict(data["args"])
+                            spb.add(e)
+                        case "VotePowerBlockSelected":
+                            preregistration_started = False
+                            preregistered = False
+                            e = VotePowerBlockSelected.from_dict(data["args"])
+                            spb.add(e)
+                            voter_registration_started = True
+                            voter_registration_started_ts = int(time.time())
+                        case "RandomAcquisitionStarted":
+                            e = RandomAcquisitionStarted.from_dict(data["args"])
+                            spb.add(e)
+                            preregistration_started = True
+                            preregistration_started_ts = int(time.time())
+                        case "FastUpdateFeedsSubmitted":
+                            e = FastUpdateFeedsSubmitted.from_dict(
+                                data["args"],
+                                data["address"],
+                                data["transactionHash"],
+                            )
+                            tx = await w.eth.get_transaction(e.transaction_hash)
+                            spa, address, update_array = calculate_update_from_tx(
+                                config, w, tx
+                            )
+                            entity = signing_policy.entity_mapper.by_identity_address[
+                                tia
+                            ]
+                            fum.fast_updates.append(
+                                FastUpdate(
+                                    signing_policy.reward_epoch.id,
+                                    address,
+                                    update_array,
+                                )
+                            )
+                            # with expected sample size 1 and average block time of
+                            # 1s, this should be an ok approximation
+                            if (
+                                len(fum.fast_updates)
+                                > minimal_conditions.time_period.value
+                            ):
+                                fum.fast_updates.popleft()
+                            if un_prefix_0x(entity.signing_policy_address) == spa:
+                                # We check update array when we receive a new one
+                                event_messages.extend(
+                                    fum.check_update_length(nr_of_feeds, fast_update_re)
+                                )
+                                fum.address_list.add(address)
+                        case "FastUpdateFeeds":
+                            e = FastUpdateFeeds.from_dict(
+                                data["args"],
+                                data["address"],
+                                data["transactionHash"],
+                            )
+                            nr_of_feeds, fast_update_re = (
+                                len(e.feeds),
+                                ref.from_voting_epoch(
+                                    vef.make_epoch(e.voting_round_id)
+                                ).id,
+                            )
+                        case "VoterPreRegistered":
+                            e = VoterPreRegistered.from_dict(
+                                data["args"],
+                                data["address"],
+                                data["transactionHash"],
+                            )
+                            entity = signing_policy.entity_mapper.by_identity_address[
+                                tia
+                            ]
+                            if tia == e.voter:
+                                preregistered = True
+
+            for tx in block_data["transactions"]:
+                assert not isinstance(tx, bytes)
+                wtx = WTxData.from_tx_data(tx, block_data)
+
+                called_function_sig = wtx.input[:4].hex()
+                input = wtx.input[4:].hex()
+                sender_address = wtx.from_address
+                entity = signing_policy.entity_mapper.by_omni.get(sender_address)
+                if entity is None:
+                    continue
+                target_entity = signing_policy.entity_mapper.by_identity_address[tia]
+
+                if called_function_sig in target_function_signatures:
+                    # check if the Submission address is correct
+                    if entity == target_entity:
+                        tx_messages.extend(cm.check_submission_address(wtx.to_address))
+                    mode = target_function_signatures[called_function_sig]
+                    match mode:
+                        case "submit1":
+                            try:
+                                parsed = parse_submit1_tx(input)
+                                if parsed.ftso is not None:
+                                    vrm.get(
+                                        ve(parsed.ftso.voting_round_id)
+                                    ).ftso.insert_submit_1(entity, parsed.ftso, wtx)
+                                if parsed.fdc is not None:
+                                    vrm.get(
+                                        ve(parsed.fdc.voting_round_id)
+                                    ).fdc.insert_submit_1(entity, parsed.fdc, wtx)
+                            except Exception:
+                                pass
+
+                        case "submit2":
+                            try:
+                                parsed = parse_submit2_tx(input)
+                                if parsed.ftso is not None:
+                                    vrm.get(
+                                        ve(parsed.ftso.voting_round_id)
+                                    ).ftso.insert_submit_2(entity, parsed.ftso, wtx)
+                                if parsed.fdc is not None:
+                                    vrm.get(
+                                        ve(parsed.fdc.voting_round_id)
+                                    ).fdc.insert_submit_2(entity, parsed.fdc, wtx)
+                            except Exception:
+                                pass
+
+                        case "submitSignatures":
+                            try:
+                                parsed = parse_submit_signature_tx(input)
+                                if parsed.ftso is not None:
+                                    vrm.get(
+                                        ve(parsed.ftso.voting_round_id)
+                                    ).ftso.insert_submit_signatures(
+                                        entity, parsed.ftso, wtx
+                                    )
+                                if parsed.fdc is not None:
+                                    vr = vrm.get(ve(parsed.fdc.voting_round_id))
+                                    vr.fdc.insert_submit_signatures(
+                                        entity, parsed.fdc, wtx
+                                    )
+
+                                    # NOTE:(matej) this is currently the easiest
+                                    # way to get consensus bitvote
+                                    vr.fdc.consensus_bitvote[
+                                        parsed.fdc.payload.unsigned_message
+                                    ] += 1
+
+                            except Exception:
+                                pass
+
+            messages: list[Message] = []
+            messages.extend(tx_messages)
+            messages.extend(event_messages)
+            entity = signing_policy.entity_mapper.by_identity_address[tia]
+
+            # perform all minimal condition checks here and reset node connections
+            if int(time.time() - last_minimal_conditions_check) > 60:
+                min_cond_messages: list[Message] = []
+
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_ftso_block_latency_feeds(
+                        entity, spm, fum
+                    )
+                )
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_ftso_anchor_feeds(
+                        medians, entity_votes
+                    )
+                )
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_staking(
+                        uptime_validations, node_connections
+                    )
+                )
+                min_cond_messages.extend(
+                    minimal_conditions.calculate_fdc_participation(signatures)
+                )
+
+                for m in min_cond_messages:
+                    log_message(config, m)
+
+                last_minimal_conditions_check = int(time.time())
+
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "platform.getCurrentValidators",
+                "params": {
+                    "nodeIDs": [
+                        node_id_to_representation(node.node_id) for node in entity.nodes
+                    ]
+                },
+            }
+            if int(time.time() - last_ping) > 90:
+                try:
+                    if len([node.node_id for node in entity.nodes]) > 0:
+                        response = requests.post(
+                            config.p_chain_rpc_url, json=payload, timeout=10
+                        )
+                        response.raise_for_status()
+                        result = response.json()
+                        if "error" in result:
+                            LOGGER.warning("Error calling API: check params")
+
+                        uptime_validations += 1
+                        for node in result["result"]["validators"]:
+                            node_connections[node["nodeID"]].append(node["connected"])
+                    last_ping = time.time()
+                    while (
+                        uptime_validations > minimal_conditions.time_period.value // 90
+                    ):
+                        uptime_validations -= 1
+                        for node in node_connections:
+                            node_connections[node].popleft()
+
+                except requests.RequestException as e:
+                    LOGGER.warning(f"Error calling API: {e}")
+                    last_ping = time.time()
+
+            if int(time.time() - cron_time) < 60 * 60:
+                check_functions = [
+                    entity.check_addresses(config, w),
+                    fum.check_addresses(config, w),
+                ]
+                messages.extend(await cron(check_functions))
+
+            rounds = vrm.finalize(block_data)
+            # prepare new data for anchor feeds
+            if len(rounds) > 0:
+                medians.extend([round.ftso.medians for round in rounds])
+                for round in rounds:
+                    extracted_ftso = extract_round_for_entity(
+                        round.ftso, entity, round.voting_epoch
+                    )
+                    if extracted_ftso.submit_2 is not None:
+                        votes = extracted_ftso.submit_2.parsed_payload.payload.values
+                        entity_votes.append(votes)
+                    else:
+                        entity_votes.append([])
+                # a new vote is expected every 90 seconds
+                while len(medians) > minimal_conditions.time_period.value // 90:
+                    medians.popleft()
+                    entity_votes.popleft()
+            for r in rounds:
+                messages.extend(validate_round(r, signing_policy, entity, config))
+
+            # prepare new data for FDC participation
+            signatures.extend([round.submitted_signatures for round in rounds])
+            while len(signatures) > minimal_conditions.time_period.value // 90:
+                signatures.popleft()
+
+            # reporting on registration and preregistration
+            if preregistration_started and not preregistered:
+                mb = Message.builder()
+                if int(time.time() - preregistration_started_ts) > 60:
+                    level = MessageLevel.CRITICAL
+                    message = mb.build(
+                        level,
+                        (
+                            "Voter not preregistered after "
+                            f"{int(time.time() - preregistration_started_ts) // 60}"
+                            " minutes"
+                        ),
+                    )
+                    messages.append(message)
+
+            if voter_registration_started and not registered:
+                mb = Message.builder()
+                if int(time.time() - voter_registration_started_ts) > 60:
+                    level = MessageLevel.CRITICAL
+                    message = mb.build(
+                        level,
+                        (
+                            "Voter not registered after "
+                            f"{int(time.time() -
+                                    voter_registration_started_ts) // 60}"
+                            " minutes"
+                        ),
+                    )
+                    messages.append(message)
+
+            for m in messages:
+                log_message(config, m)
+
+        block_number = latest_block
