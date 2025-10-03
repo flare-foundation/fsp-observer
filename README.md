@@ -8,8 +8,10 @@ A python tool to observe
 [`flare-systems-deployment`](https://github.com/flare-foundation/flare-systems-deployment)
 and
 [`fdc-suite-deployment`](https://github.com/flare-foundation/fdc-suite-deployment).
-It does so without keeping any state. This allows it to only require the identity address of
-the observed entity and an observer node rpc. It can send error messages to:
+It does so without keeping any state. This allows it to only require the
+identity address of the observed entity and an observer node rpc. It can send
+error messages to:
+
 - discord via webhook
 - slack via webhook
 - telegram bot via sendMessage method
@@ -17,7 +19,8 @@ the observed entity and an observer node rpc. It can send error messages to:
 
 ## Setting up and using fsp-observer
 
-The easiest way to run is via docker. The only required env variables are `RPC_BASE_URL` and `IDENTITY_ADDRESS`. Others can be set as desired.
+The easiest way to run is via docker. The only required env variables are
+`RPC_BASE_URL` and `IDENTITY_ADDRESS`. Others can be set as desired.
 
 ```bash
 docker run \
@@ -32,6 +35,7 @@ docker run \
 ```
 
 Alternatively python can be used to run:
+
 ```bash
 python -m venv venv
 pip install -r requirements.txt

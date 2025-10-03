@@ -13,6 +13,7 @@ pip install -U -r requirements.txt -r dev-requirements.txt
 ### Git hooks and linters
 
 commited code should be linted and formatted
+
 ```sh
 # format
 ruff format
@@ -23,6 +24,7 @@ ruff check --fix
 ```
 
 enforce this check with a pre commit hook
+
 ```sh
 pre-commit install
 ```
