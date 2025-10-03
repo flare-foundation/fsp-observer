@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from py_flare_common.fsp.messaging import parse_generic_tx
 from py_flare_common.fsp.messaging.byte_parser import ByteParser
@@ -16,6 +17,9 @@ from ..voting_round import VotingRound, WParsedPayload
 from .signature import Signature
 from .types import ValidateFn
 
+if TYPE_CHECKING:
+    from observer.validation.validation import ExtractedEntityVotingRound
+
 
 # NOTE:(matej) stupid type cast
 def _check_type(f: ValidateFn[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]):
@@ -26,7 +30,7 @@ def _check_type(f: ValidateFn[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]):
 def check_submit_1(
     submit_1: WParsedPayload[FtsoSubmit1] | None,
     message_builder: MessageBuilder,
-    extracted_round,
+    extracted_round: "ExtractedEntityVotingRound[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]",  # noqa: E501
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -37,9 +41,7 @@ def check_submit_1(
     # we perform the following checks:
     # - submit1 doesn't exist -> error
     # - submit1 exists but commit hash length isn't 32 -> error
-    # NOTE: (miha) The protocol accepts the latest submit1 sent in the correct
-    # time interval. We check if there are any submit1 sent before or after interval
-    # and send a warning for those before and a warning for those after
+    # - submit1 exists but was sent before or after submission window -> warning
 
     if submit_1 is None:
         issues.append(mb.build(MessageLevel.ERROR, "no submit1 transaction"))
@@ -53,26 +55,27 @@ def check_submit_1(
                     f"submit1 commit hash unexpeted length ({hash_len}), expected 32",
                 )
             )
-        if len(extracted_round.submit_1_before) > 0:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "submit 1 transactions sent before correct time interval: "
-                        f"{extracted_round.submit_2_before}"
-                    ),
-                )
+
+    if early := extracted_round.submit_1.early:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                (
+                    "submit1 transactions sent before correct time interval: "
+                    f"{tx_hashes}"
+                ),
             )
-        if len(extracted_round.submit_1_after) > 0:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "submit 1 transactions sent after correct time interval: "
-                        f"{extracted_round.submit_2_after}"
-                    ),
-                )
+        )
+
+    if late := extracted_round.submit_1.late:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                (f"submit1 transactions sent after correct time interval: {tx_hashes}"),
             )
+        )
 
     return issues
 
@@ -84,7 +87,7 @@ def check_submit_2(
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
-    extracted_round,
+    extracted_round: "ExtractedEntityVotingRound[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]",  # noqa: E501
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -101,9 +104,7 @@ def check_submit_2(
     # - ftso values have null values -> warning
     # - ftso value have values that aren't in range of minimal conditions -> warning
     # - ftso values have incorrect length -> warning
-    # NOTE: (miha) The protocol accepts the latest submit2 sent in the correct
-    # time interval. We check if there are any submit2 sent before or after interval
-    # and send a warning for those before and a warning for those after
+    # - submit2 exists but was sent before or after submission window -> warning
 
     if submit_1 is None and submit_2 is None:
         issues.append(mb.build(MessageLevel.ERROR, "no submit2 transaction"))
@@ -181,26 +182,26 @@ def check_submit_2(
             #         )
             #     )
 
-        if len(extracted_round.submit_2_before) > 0:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "submit 2 transactions sent before correct time interval: "
-                        f"{extracted_round.submit_2_before}"
-                    ),
-                )
+    if early := extracted_round.submit_2.early:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                (
+                    "submit2 transactions sent before correct time interval: "
+                    f"{tx_hashes}"
+                ),
             )
-        if len(extracted_round.submit_2_after) > 0:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "submit 2 transactions sent after correct time interval: "
-                        f"{extracted_round.submit_2_after}"
-                    ),
-                )
+        )
+
+    if late := extracted_round.submit_2.late:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                (f"submit2 transactions sent after correct time interval: {tx_hashes}"),
             )
+        )
 
     return issues
 
@@ -212,7 +213,7 @@ def check_submit_signatures(
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
-    extracted_round,
+    extracted_round: "ExtractedEntityVotingRound[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]",  # noqa: E501
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -227,9 +228,7 @@ def check_submit_signatures(
     # - submitSignatures doesn't exist -> error
     # - submitSignature was sent after the deadline -> warning
     # - signature doesn't match finalization -> error
-    # NOTE: (miha) The protocol accepts the latest submitSignatures sent in the correct
-    # time interval. We check if there are any submitSignatures sent before or after
-    # this interval and send a warning for those before and a warning for those after
+    # - submitSignature exists but was sent before or after submission window -> warning
 
     if submit_signatures is None:
         issues.append(
@@ -250,27 +249,6 @@ def check_submit_signatures(
                 )
             )
 
-        if len(extracted_round.submit_signatures_before) > 0:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "submit signatures transactions sent before correct time "
-                        f"interval: {extracted_round.submit_signatures_before}"
-                    ),
-                )
-            )
-        if len(extracted_round.submit_signatures_after) > 0:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "submit signatures transactions sent after correct time "
-                        f"interval: {extracted_round.submit_signatures_after}"
-                    ),
-                )
-            )
-
     if submit_signatures is not None and finalization is not None:
         s = Signature.from_parsed_signature(
             submit_signatures.parsed_payload.payload.signature
@@ -286,5 +264,17 @@ def check_submit_signatures(
                     "submitSignatures signature doesn't match finalization",
                 ),
             )
+
+    if early := extracted_round.submit_signatures.early:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                (
+                    "submit signatures transactions sent before correct time "
+                    f"interval: {tx_hashes}"
+                ),
+            )
+        )
 
     return issues

@@ -14,22 +14,16 @@ from configuration.types import Configuration
 
 from ..message import Message
 from ..reward_epoch_manager import Entity, SigningPolicy
-from ..voting_round import VotingRound, VotingRoundProtocol, WParsedPayload
+from ..voting_round import VotingRound, VotingRoundProtocol, WParsedPayloadExtracted
 from . import fdc, ftso
 from .types import ValidateFn, ValidateFnKwargs
 
 
 @frozen
 class ExtractedEntityVotingRound[S1, S2, SS]:
-    submit_1: WParsedPayload[S1] | None
-    submit_1_before: Sequence[WParsedPayload[S1]]
-    submit_1_after: Sequence[WParsedPayload[S1]]
-    submit_2: WParsedPayload[S2] | None
-    submit_2_before: Sequence[WParsedPayload[S2]]
-    submit_2_after: Sequence[WParsedPayload[S2]]
-    submit_signatures: WParsedPayload[SS] | None
-    submit_signatures_before: Sequence[WParsedPayload[SS]]
-    submit_signatures_after: Sequence[WParsedPayload[SS]]
+    submit_1: WParsedPayloadExtracted[S1]
+    submit_2: WParsedPayloadExtracted[S2]
+    submit_signatures: WParsedPayloadExtracted[SS]
 
 
 def extract_round_for_entity[S1, S2, S3](
@@ -39,33 +33,18 @@ def extract_round_for_entity[S1, S2, S3](
     rd = next.reveal_deadline()
 
     _submit_1 = r.submit_1.by_identity[e.identity_address]
-    submit_1 = _submit_1.extract_latest(range(epoch.start_s, epoch.end_s))
-    submit_1_before, submit_1_after = _submit_1.extract_outside_of_bounds(
-        range(epoch.start_s, epoch.end_s)
-    )
+    submit_1 = _submit_1.extract(epoch.start_s, epoch.end_s)
 
     _submit_2 = r.submit_2.by_identity[e.identity_address]
-    submit_2 = _submit_2.extract_latest(range(next.start_s, rd))
-    submit_2_before, submit_2_after = _submit_2.extract_outside_of_bounds(
-        range(next.start_s, rd)
-    )
+    submit_2 = _submit_2.extract(next.start_s, rd)
 
     _submit_signatures = r.submit_signatures.by_identity[e.identity_address]
-    submit_signatures = _submit_signatures.extract_latest(range(rd, next.end_s))
-    submit_signatures_before, submit_signatures_after = (
-        _submit_signatures.extract_outside_of_bounds(range(rd, next.end_s))
-    )
+    submit_signatures = _submit_signatures.extract(rd, next.end_s)
 
     return ExtractedEntityVotingRound(
         submit_1=submit_1,
         submit_2=submit_2,
         submit_signatures=submit_signatures,
-        submit_1_before=submit_1_before,
-        submit_1_after=submit_1_after,
-        submit_2_before=submit_2_before,
-        submit_2_after=submit_2_after,
-        submit_signatures_before=submit_signatures_before,
-        submit_signatures_after=submit_signatures_after,
     )
 
 
@@ -96,9 +75,9 @@ def validate_round(
     )
 
     ftso_kwargs: ValidateFnKwargs[FtsoSubmit1, FtsoSubmit2, SubmitSignatures] = {
-        "submit_1": extracted_ftso.submit_1,
-        "submit_2": extracted_ftso.submit_2,
-        "submit_signatures": extracted_ftso.submit_signatures,
+        "submit_1": extracted_ftso.submit_1.extracted,
+        "submit_2": extracted_ftso.submit_2.extracted,
+        "submit_signatures": extracted_ftso.submit_signatures.extracted,
         "finalization": round.ftso.finalization,
         "extracted_round": extracted_ftso,
         "message_builder": mb_ftso,
@@ -123,9 +102,9 @@ def validate_round(
     )
 
     fdc_kwargs: ValidateFnKwargs[FdcSubmit1, FdcSubmit2, SubmitSignatures] = {
-        "submit_1": extracted_fdc.submit_1,
-        "submit_2": extracted_fdc.submit_2,
-        "submit_signatures": extracted_fdc.submit_signatures,
+        "submit_1": extracted_fdc.submit_1.extracted,
+        "submit_2": extracted_fdc.submit_2.extracted,
+        "submit_signatures": extracted_fdc.submit_signatures.extracted,
         "finalization": round.fdc.finalization,
         "extracted_round": extracted_fdc,
         "message_builder": mb_fdc,

@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from py_flare_common.fsp.messaging.byte_parser import ByteParser
 from py_flare_common.fsp.messaging.types import (
@@ -13,6 +14,9 @@ from ..types import ProtocolMessageRelayed
 from ..voting_round import VotingRound, WParsedPayload
 from .signature import Signature
 from .types import ValidateFn
+
+if TYPE_CHECKING:
+    from observer.validation.validation import ExtractedEntityVotingRound
 
 
 # NOTE:(matej) stupid type cast
@@ -29,7 +33,7 @@ def check_submit_1(
     issues = []
     mb = message_builder
 
-    # NOTE:(matej) In fdc protocol submit1 is not used.
+    # NOTE: In fdc protocol submit1 is not used.
     # we perform the following checks:
     # - submit1 exists -> error
 
@@ -44,13 +48,13 @@ def check_submit_2(
     submit_2: WParsedPayload[FdcSubmit2] | None,
     message_builder: MessageBuilder,
     round: VotingRound,
-    extracted_round,
+    extracted_round: "ExtractedEntityVotingRound[FdcSubmit1, FdcSubmit2, SubmitSignatures]",  # noqa: E501
     **_,
 ) -> Sequence[Message]:
     issues = []
     mb = message_builder
 
-    # NOTE:(matej) In fdc protocol submit2 is used for sending the bit vote
+    # NOTE: In fdc protocol submit2 is used for sending the bit vote
     # this means that the messsage must exist. Additionally decoded bit vote must have
     # length matching the number of requests in the round and bit vote must dominate
     # consensus bit vote.
@@ -58,9 +62,7 @@ def check_submit_2(
     # - submit2 doesnt't exist -> error
     # - submit2 exists but bit vote length doesn't match number of requests -> error
     # - submit2 exists but bit vote does not dominate consensus bit vote -> error
-    # NOTE: (miha) The protocol accepts the latest submit2 sent in the correct
-    # time interval. We check if there are any submit2 sent before or after interval
-    # and send a warning for those before and a warning for those after
+    # - submit2 exists but was sent before or after submission window -> warning
 
     if not round.fdc.consensus_bitvote:
         return []
@@ -112,26 +114,26 @@ def check_submit_2(
                         )
                     )
 
-        if len(extracted_round.submit_2_before) > 0:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "submit 2 transactions sent before correct time interval: "
-                        f"{extracted_round.submit_2_before}"
-                    ),
-                )
+    if early := extracted_round.submit_2.early:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                (
+                    "submit2 transactions sent before correct time interval: "
+                    f"{tx_hashes}"
+                ),
             )
-        if len(extracted_round.submit_2_after) > 0:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "submit 2 transactions sent after correct time interval: "
-                        f"{extracted_round.submit_2_after}"
-                    ),
-                )
+        )
+
+    if late := extracted_round.submit_2.late:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                (f"submit2 transactions sent after correct time interval: {tx_hashes}"),
             )
+        )
 
     return issues
 
@@ -141,7 +143,7 @@ def check_submit_signatures(
     submit_2: WParsedPayload[FdcSubmit2] | None,
     submit_signatures: WParsedPayload[SubmitSignatures] | None,
     finalization: ProtocolMessageRelayed | None,
-    extracted_round,
+    extracted_round: "ExtractedEntityVotingRound[FdcSubmit1, FdcSubmit2, SubmitSignatures]",  # noqa: E501
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
@@ -161,9 +163,7 @@ def check_submit_signatures(
     #   dominates consensus bit vote -> reveal offence
     # - submitSignature was sent after the deadline -> warning
     # - signature doesn't match finalization -> error
-    # NOTE: (miha) The protocol accepts the latest submitSignatures sent in the correct
-    # time interval. We check if there are any submitSignatures sent before or after
-    # this interval and send a warning for those before and a warning for those after
+    # - submitSignature exists but was sent before or after submission window -> warning
 
     if not round.fdc.consensus_bitvote:
         return []
@@ -218,27 +218,6 @@ def check_submit_signatures(
                 )
             )
 
-        if len(extracted_round.submit_signatures_before) > 0:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "submit signatures transactions sent before correct time "
-                        f"interval: {extracted_round.submit_signatures_before}"
-                    ),
-                )
-            )
-        if len(extracted_round.submit_signatures_after) > 0:
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "submit signatures transactions sent after correct time "
-                        f"interval: {extracted_round.submit_signatures_after}"
-                    ),
-                )
-            )
-
     if submit_signatures is not None and finalization is not None:
         s = Signature.from_parsed_signature(
             submit_signatures.parsed_payload.payload.signature
@@ -254,6 +233,18 @@ def check_submit_signatures(
                     "submitSignatures signature doesn't match finalization",
                 ),
             )
+
+    if early := extracted_round.submit_signatures.early:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        issues.append(
+            mb.build(
+                MessageLevel.WARNING,
+                (
+                    "submit signatures transactions sent before correct time "
+                    f"interval: {tx_hashes}"
+                ),
+            )
+        )
 
     if len(issues) == 0:
         round.submitted_signatures = True

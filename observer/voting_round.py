@@ -1,5 +1,4 @@
 from collections import defaultdict
-from collections.abc import Sequence
 from typing import Self
 
 from attrs import define, field, frozen
@@ -73,40 +72,44 @@ class WParsedPayload[T]:
     wtx_data: WTxData
 
 
+@frozen
+class WParsedPayloadExtracted[T]:
+    extracted: WParsedPayload[T] | None
+
+    early: list[WParsedPayload[T]]
+    in_window: list[WParsedPayload[T]]
+    late: list[WParsedPayload[T]]
+
+
 @define
 class WParsedPayloadList[T]:
     agg: list[WParsedPayload[T]] = field(factory=list)
 
-    def extract_latest(self, r: range) -> WParsedPayload[T] | None:
-        latest: WParsedPayload[T] | None = None
+    def extract(self, start: int, stop: int) -> WParsedPayloadExtracted[T]:
+        early, in_window, late = [], [], []
+        extracted = None
 
         for wpp in self.agg:
             wtx = wpp.wtx_data
 
-            if not (r.start <= wtx.timestamp < r.stop):
+            if wtx.timestamp < start:
+                early.append(wpp)
                 continue
 
-            if latest is None or wtx.timestamp > latest.wtx_data.timestamp:
-                latest = wpp
+            if wtx.timestamp >= stop:
+                late.append(wpp)
+                continue
 
-        return latest
+            in_window.append(wpp)
+            if extracted is None or wtx.timestamp > extracted.wtx_data.timestamp:
+                extracted = wpp
 
-    def extract_outside_of_bounds(
-        self, r: range
-    ) -> tuple[Sequence[WParsedPayload[T]], Sequence[WParsedPayload[T]]]:
-        before: Sequence[WParsedPayload[T]] = []
-        after: Sequence[WParsedPayload[T]] = []
-
-        for wpp in self.agg:
-            wtx = wpp.wtx_data
-
-            if wtx.timestamp < r.start:
-                before.append(wpp)
-
-            if wtx.timestamp >= r.stop:
-                after.append(wpp)
-
-        return before, after
+        return WParsedPayloadExtracted(
+            extracted=extracted,
+            early=early,
+            in_window=in_window,
+            late=late,
+        )
 
 
 @define
@@ -164,10 +167,10 @@ class FtsoVotingRoundProtocol(
 
         for entity in signing_policy.entities:
             _submit_1 = self.submit_1.by_identity[entity.identity_address]
-            submit_1 = _submit_1.extract_latest(range(epoch.start_s, epoch.end_s))
+            submit_1 = _submit_1.extract(epoch.start_s, epoch.end_s).extracted
 
             _submit_2 = self.submit_2.by_identity[entity.identity_address]
-            submit_2 = _submit_2.extract_latest(range(next.start_s, rd))
+            submit_2 = _submit_2.extract(next.start_s, rd).extracted
 
             if submit_1 is None or submit_2 is None:
                 continue
