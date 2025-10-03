@@ -760,9 +760,9 @@ async def observer_loop(config: Configuration) -> None:
                 for round in rounds:
                     extracted_ftso = extract_round_for_entity(
                         round.ftso, entity, round.voting_epoch
-                    )
-                    if extracted_ftso.submit_2 is not None:
-                        votes = extracted_ftso.submit_2.parsed_payload.payload.values
+                    ).submit_2.extracted
+                    if extracted_ftso is not None:
+                        votes = extracted_ftso.parsed_payload.payload.values
                         entity_votes.append(votes)
                     else:
                         entity_votes.append([])
@@ -771,6 +771,7 @@ async def observer_loop(config: Configuration) -> None:
                     medians.popleft()
                     entity_votes.popleft()
             for r in rounds:
+                LOGGER.info(f"processed round {r.voting_epoch.id}")
                 messages.extend(validate_round(r, signing_policy, entity, config))
 
             # prepare new data for FDC participation
