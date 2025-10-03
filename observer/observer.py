@@ -746,7 +746,8 @@ async def observer_loop(config: Configuration) -> None:
                     LOGGER.warning(f"Error calling API: {e}")
                     last_ping = time.time()
 
-            if int(time.time() - cron_time) < 60 * 60:
+            if time.time() - cron_time > 60 * 60:
+                cron_time = time.time()
                 check_functions = [
                     entity.check_addresses(config, w),
                     fum.check_addresses(config, w),
