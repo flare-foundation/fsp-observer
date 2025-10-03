@@ -1,9 +1,15 @@
+from collections.abc import Sequence
 from typing import Self
 
 from attrs import define, field, frozen
 from eth_typing import ChecksumAddress
 from py_flare_common.fsp.epoch.epoch import RewardEpoch
+from web3 import AsyncWeb3
 
+from configuration.types import Configuration
+from observer.address import AddressChecker
+
+from .message import Message, MessageLevel
 from .types import (
     RandomAcquisitionStarted,
     SigningPolicyInitialized,
@@ -41,6 +47,17 @@ class Entity:
 
     # this is emitted in signing policy initialized event
     normalized_weight: int
+
+    async def check_addresses(
+        self, config: Configuration, w: AsyncWeb3
+    ) -> Sequence[Message]:
+        addrs = [
+            ("submit", self.submit_address),
+            ("submit signatures", self.submit_signatures_address),
+            ("signing policy", self.signing_policy_address),
+        ]
+
+        return await AddressChecker.check_addresses(addrs, config, w)
 
 
 @frozen
@@ -183,7 +200,7 @@ class SigningPolicyBuilder:
         vres = {v.voter: v for v in self.voter_registered}
         vries = {v.voter: v for v in self.voter_registration_info}
 
-        entities = []
+        entities: list[Entity] = []
         mapper = EntityMapper()
 
         for i, voter in enumerate(self.signing_policy_initialized.voters):
@@ -223,3 +240,45 @@ class SigningPolicyBuilder:
             entities=entities,
             entity_mapper=mapper,
         )
+
+
+@define
+class RewardManager:
+    async def get_unclaimed_rewards(
+        self, entity: Entity, config: Configuration, w: AsyncWeb3
+    ) -> Sequence[Message]:
+        mb = Message.builder()
+        messages = []
+        addresses = [
+            entity.identity_address,
+            entity.delegation_address,
+            entity.signing_policy_address,
+            entity.submit_address,
+            entity.submit_signatures_address,
+        ]
+        claimable_func = w.eth.contract(
+            abi=config.contracts.RewardManager.abi,
+            address=config.contracts.RewardManager.address,
+        ).functions["getRewardEpochIdsWithClaimableRewards"]
+        min_re, max_re = await claimable_func().call()
+        for address in addresses:
+            for re in range(min_re, max_re + 1):
+                for claim_type in range(4):
+                    unclaimed_func = w.eth.contract(
+                        abi=config.contracts.RewardManager.abi,
+                        address=config.contracts.RewardManager.address,
+                    ).functions["getUnclaimedRewardState"]
+                    state = await unclaimed_func(address, re, claim_type).call()
+                    # we are looking for claims that are not initialised
+                    # and with non-zero amount
+                    if not state[0] and state[1] > 0:
+                        messages.append(
+                            mb.build(
+                                MessageLevel.WARNING,
+                                (
+                                    f"Unclaimed rewards in reward epoch {re},"
+                                    f" claim type {claim_type}, amount {state[1]}"
+                                ),
+                            )
+                        )
+        return messages

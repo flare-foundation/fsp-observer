@@ -1,4 +1,5 @@
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import Self
 
 from attrs import define, field, frozen
@@ -90,6 +91,23 @@ class WParsedPayloadList[T]:
 
         return latest
 
+    def extract_outside_of_bounds(
+        self, r: range
+    ) -> tuple[Sequence[WParsedPayload[T]], Sequence[WParsedPayload[T]]]:
+        before: Sequence[WParsedPayload[T]] = []
+        after: Sequence[WParsedPayload[T]] = []
+
+        for wpp in self.agg:
+            wtx = wpp.wtx_data
+
+            if wtx.timestamp < r.start:
+                before.append(wpp)
+
+            if wtx.timestamp >= r.stop:
+                after.append(wpp)
+
+        return before, after
+
 
 @define
 class ParsedPayloadMapper[T]:
@@ -127,7 +145,11 @@ class FtsoVotingRoundProtocol(
 ):
     medians: list[FtsoMedian] = field(factory=list)
 
-    def calculate_medians(self, epoch: VotingEpoch, signing_policy: SigningPolicy):
+    def calculate_medians(
+        self,
+        epoch: VotingEpoch,
+        signing_policy: SigningPolicy,
+    ):
         next = epoch.next
         rd = next.reveal_deadline()
 
@@ -227,6 +249,7 @@ class VotingRound:
 
     ftso: FtsoVotingRoundProtocol = field(factory=FtsoVotingRoundProtocol)
     fdc: FdcVotingRoundProtocol = field(factory=FdcVotingRoundProtocol)
+    submitted_signatures: bool = False
 
 
 @define

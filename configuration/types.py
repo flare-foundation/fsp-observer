@@ -144,11 +144,14 @@ FLARE_CONTRACT_REGISTRY_ABI = json.load(
 @frozen
 class Contracts:
     VoterRegistry: Contract
+    VoterPreRegistry: Contract
     FlareSystemsCalculator: Contract
     FlareSystemsManager: Contract
     Relay: Contract
     Submission: Contract
     FdcHub: Contract
+    FastUpdater: Contract
+    RewardManager: Contract
 
     @classmethod
     def get_contracts(cls, w: Web3) -> Self:
@@ -222,6 +225,7 @@ class Configuration:
     chain_id: int
     contracts: Contracts
     rpc_url: str
+    p_chain_rpc_url: str
     epoch: Epoch
     notification: Notification
     fee_threshold: int

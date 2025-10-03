@@ -44,6 +44,7 @@ def check_submit_2(
     submit_2: WParsedPayload[FdcSubmit2] | None,
     message_builder: MessageBuilder,
     round: VotingRound,
+    extracted_round,
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -57,6 +58,9 @@ def check_submit_2(
     # - submit2 doesnt't exist -> error
     # - submit2 exists but bit vote length doesn't match number of requests -> error
     # - submit2 exists but bit vote does not dominate consensus bit vote -> error
+    # NOTE: (miha) The protocol accepts the latest submit2 sent in the correct
+    # time interval. We check if there are any submit2 sent before or after interval
+    # and send a warning for those before and a warning for those after
 
     if not round.fdc.consensus_bitvote:
         return []
@@ -108,6 +112,27 @@ def check_submit_2(
                         )
                     )
 
+        if len(extracted_round.submit_2_before) > 0:
+            issues.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "submit 2 transactions sent before correct time interval: "
+                        f"{extracted_round.submit_2_before}"
+                    ),
+                )
+            )
+        if len(extracted_round.submit_2_after) > 0:
+            issues.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "submit 2 transactions sent after correct time interval: "
+                        f"{extracted_round.submit_2_after}"
+                    ),
+                )
+            )
+
     return issues
 
 
@@ -116,6 +141,7 @@ def check_submit_signatures(
     submit_2: WParsedPayload[FdcSubmit2] | None,
     submit_signatures: WParsedPayload[SubmitSignatures] | None,
     finalization: ProtocolMessageRelayed | None,
+    extracted_round,
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
@@ -135,6 +161,9 @@ def check_submit_signatures(
     #   dominates consensus bit vote -> reveal offence
     # - submitSignature was sent after the deadline -> warning
     # - signature doesn't match finalization -> error
+    # NOTE: (miha) The protocol accepts the latest submitSignatures sent in the correct
+    # time interval. We check if there are any submitSignatures sent before or after
+    # this interval and send a warning for those before and a warning for those after
 
     if not round.fdc.consensus_bitvote:
         return []
@@ -189,6 +218,27 @@ def check_submit_signatures(
                 )
             )
 
+        if len(extracted_round.submit_signatures_before) > 0:
+            issues.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "submit signatures transactions sent before correct time "
+                        f"interval: {extracted_round.submit_signatures_before}"
+                    ),
+                )
+            )
+        if len(extracted_round.submit_signatures_after) > 0:
+            issues.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "submit signatures transactions sent after correct time "
+                        f"interval: {extracted_round.submit_signatures_after}"
+                    ),
+                )
+            )
+
     if submit_signatures is not None and finalization is not None:
         s = Signature.from_parsed_signature(
             submit_signatures.parsed_payload.payload.signature
@@ -204,5 +254,8 @@ def check_submit_signatures(
                     "submitSignatures signature doesn't match finalization",
                 ),
             )
+
+    if len(issues) == 0:
+        round.submitted_signatures = True
 
     return issues
