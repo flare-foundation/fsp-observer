@@ -100,12 +100,12 @@ def get_notification_config() -> Notification:
 
 
 def get_config() -> Configuration:
-    node_url = os.environ.get("NODE_URL")
-    if node_url is None:
-        raise ConfigError("NODE_URL environment variable must be set.")
+    rpc_base_url = os.environ.get("RPC_BASE_URL")
+    if rpc_base_url is None:
+        raise ConfigError("RPC_BASE_URL environment variable must be set.")
 
-    rpc_url = node_url + "/ext/bc/C/rpc"
-    p_chain_rpc_url = node_url + "/ext/bc/P"
+    rpc_url = rpc_base_url + "/ext/bc/C/rpc"
+    p_chain_rpc_url = rpc_base_url + "/ext/bc/P"
 
     w = Web3(Web3.HTTPProvider(rpc_url))
     if not w.is_connected():

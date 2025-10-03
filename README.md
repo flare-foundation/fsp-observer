@@ -17,7 +17,7 @@ aren't a required value for the observer to start. All example values below
 
 ```bash
 docker run \
-    -e RPC_URL="http://host/ext/bc/C/rpc" \
+    -e RPC_BASE_URL="https://flare-api.flare.network" \
     -e IDENTITY_ADDRESS="0x0000000000000000000000000000000000000000" \
     -e NOTIFICATION_DISCORD_WEBHOOK="https://discord.com/api/webhooks/secret/secret" \
     -e NOTIFICATION_TELEGRAM_BOT_TOKEN="secret" \

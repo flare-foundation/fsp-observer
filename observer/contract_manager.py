@@ -11,7 +11,7 @@ class ContractManager:
     contracts: Contracts
 
     def get_contracts_list(self) -> list[Contract]:
-        return [getattr(self.contracts, c.name) for c in self.contracts.__attrs_attrs__]  # type: ignore
+        return [getattr(self.contracts, c.name) for c in self.contracts.__attrs_attrs__]
 
     def get_events(self):
         contracts = self.get_contracts_list()

@@ -13,11 +13,7 @@ def main(config: Configuration):
         asyncio.run(observer_loop(config))
     except Exception as e:
         mb = Message.builder()
-        level = MessageLevel.CRITICAL
-        message = mb.build(
-            level,
-            (f"Observer crashed. Reason: {e}"),
-        )
+        message = mb.build(MessageLevel.CRITICAL, (f"Observer crashed. Reason: {e}"))
         log_message(config, message)
 
 

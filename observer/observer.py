@@ -801,8 +801,7 @@ async def observer_loop(config: Configuration) -> None:
                         level,
                         (
                             "Voter not registered after "
-                            f"{int(time.time() -
-                                    voter_registration_started_ts) // 60}"
+                            f"{int(time.time() - voter_registration_started_ts) // 60}"
                             " minutes"
                         ),
                     )
