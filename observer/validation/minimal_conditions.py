@@ -20,8 +20,8 @@ class Interval(Enum):
 
 @frozen
 class MinimalConditionsConfig:
-    lower_percentile = 0.995
-    upper_percentile = 1.005
+    ftso_median_band_bips = 50
+    ftoo_median_threshold_bips = 8000
     threshold = 0.8
 
 
@@ -43,34 +43,43 @@ class MinimalConditions:
     ) -> Sequence[Message]:
         mb = Message.builder()
         messages = []
-        total_rounds = len(medians)
-        if total_rounds == 0:
-            return messages
-        for i in range(len(medians[0])):
-            rounds_in_interval = 0
-            for median_list, vote_list in zip(medians, votes):
-                if len(vote_list) < i + 1 or vote_list[i] is None:
+
+        total, total_hit = 0, 0
+
+        for median_list, vote_list in zip(medians, votes):
+            for i in range(len(median_list)):
+                total += 1
+
+                if len(vote_list) <= i or vote_list[i] is None:
                     continue
+
+                median = median_list[i]
                 vote = vote_list[i]
-                assert vote
-                if (
-                    MinimalConditionsConfig.lower_percentile * median_list[i].value
-                    <= vote
-                    <= MinimalConditionsConfig.upper_percentile * median_list[i].value
-                ):
-                    rounds_in_interval += 1
-            success_rate = rounds_in_interval / total_rounds
-            if success_rate < MinimalConditionsConfig.threshold:
-                messages.append(
-                    mb.build(
-                        MessageLevel.WARNING,
-                        (
-                            "Not meeting minimal condition for FTSO anchor feed "
-                            f"in the latest interval, feed index: {i}, "
-                            f"success rate: {success_rate}"
-                        ),
-                    )
+
+                assert vote is not None
+
+                band = MinimalConditionsConfig.ftso_median_band_bips
+                low = median.value * (10_000 - band) / 10_000
+                high = median.value * (10_000 + band) / 10_000
+
+                if low <= vote <= high:
+                    total_hit += 1
+
+        if not total:
+            return messages
+
+        success_rate_bips = (total_hit * 10000) // total
+
+        if success_rate_bips < MinimalConditionsConfig.ftoo_median_threshold_bips:
+            messages.append(
+                mb.build(
+                    MessageLevel.WARNING,
+                    (
+                        "not meeting minimal condition for FTSO anchor feeds in past "
+                        f"two hours - success rate: {success_rate_bips / 100:.2f}%"
+                    ),
                 )
+            )
 
         return messages
 
