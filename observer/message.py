@@ -34,7 +34,7 @@ class MessageBuilder:
 
     network: int | None = None
     round: VotingEpoch | None = None
-    protocol: int | None = None
+    protocol: int | str | None = None
 
     def copy(self) -> Self:
         return copy.copy(self)
@@ -70,7 +70,7 @@ class MessageBuilder:
         level: MessageLevel | None = None,
         network: int | None = None,
         round: VotingEpoch | None = None,
-        protocol: int | None = None,
+        protocol: int | str | None = None,
         message: str | None = None,
     ) -> Self:
         if level is not None:

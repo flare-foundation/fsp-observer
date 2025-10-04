@@ -46,6 +46,7 @@ class Protocols:
     FDC = 200
     # NOTE:(lightftso) is this ok? Fast updates doesnt have a protocol id
     FAST_UPDATES = "fu"
+    STAKING = "staking"
 
     @classmethod
     def id_to_name(cls, protocol):
@@ -56,6 +57,8 @@ class Protocols:
                 return "songbird"
             case "fu":
                 return "fast updates"
+            case "staking":
+                return "staking"
             case _:
                 raise ValueError(f"Unknown protocol ({protocol=})")
 
