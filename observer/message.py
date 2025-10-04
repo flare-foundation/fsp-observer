@@ -6,7 +6,7 @@ from typing import Self
 from attrs import define, frozen
 from py_flare_common.fsp.epoch.epoch import VotingEpoch
 
-from configuration.config import ChainId
+from configuration.config import ChainId, Protocols
 
 
 class MessageLevel(enum.Enum):
@@ -53,9 +53,7 @@ class MessageBuilder:
             s.write(f"round:{self.round.id} ")
 
         if self.protocol is not None:
-            # TODO:(matej) make an enum like class like ChainId
-            assert self.protocol in [100, 200]
-            protocol = "ftso" if self.protocol == 100 else "fdc"
+            protocol = Protocols.id_to_name(self.protocol)
             s.write(f"protocol:{protocol} ")
 
         s.write(self.message)
