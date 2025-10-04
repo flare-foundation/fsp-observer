@@ -52,9 +52,9 @@ class Protocols:
     def id_to_name(cls, protocol):
         match protocol:
             case cls.FTSO:
-                return "coston"
+                return "ftso"
             case cls.FDC:
-                return "songbird"
+                return "fdc"
             case "fu":
                 return "fast updates"
             case "staking":
