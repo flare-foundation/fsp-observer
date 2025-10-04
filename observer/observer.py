@@ -411,7 +411,7 @@ async def observer_loop(config: Configuration) -> None:
         config.contracts.Submission.functions["submit2"].signature: "submit2",
     }
 
-    minimal_conditions = MinimalConditions().for_reward_epoch(reward_epoch.id)
+    minimal_conditions = MinimalConditions().for_network(config.chain_id).for_reward_epoch(reward_epoch.id)
     last_minimal_conditions_check = int(time.time())
     last_ping = time.time()
 

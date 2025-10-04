@@ -30,6 +30,12 @@ class MinimalConditions:
 
     time_period: Interval = Interval.LAST_2_HOURS
 
+    network: int | None = None
+
+    def for_network(self, network: int) -> Self:
+        self.network = network
+        return self
+
     def for_reward_epoch(self, rid: int) -> Self:
         self.reward_epoch_id = rid
         return self
@@ -41,7 +47,7 @@ class MinimalConditions:
     def calculate_ftso_anchor_feeds(
         self, medians: deque[list[FtsoMedian]], votes: deque[list[int | None]]
     ) -> Sequence[Message]:
-        mb = Message.builder()
+        mb = Message.builder().add(network=self.network, protocol=100)
         messages = []
 
         total, total_hit = 0, 0
@@ -86,7 +92,7 @@ class MinimalConditions:
     def calculate_ftso_block_latency_feeds(
         self, entity: Entity, spm: SigningPolicyManager, fum: FastUpdatesManager
     ) -> Sequence[Message]:
-        mb = Message.builder()
+        mb = Message.builder().add(network=self.network, protocol="fu")
         messages = []
         previous_total_active_weight = sum(
             [e.normalized_weight for e in spm.previous_policy.entities]
@@ -168,7 +174,7 @@ class MinimalConditions:
     def calculate_staking(
         self, uptime_checks: int, node_connections: dict[str, deque]
     ) -> Sequence[Message]:
-        mb = Message.builder()
+        mb = Message.builder().add(network=self.network, protocol="staking")
         messages = []
         for node in node_connections:
             if (
@@ -188,7 +194,7 @@ class MinimalConditions:
         return messages
 
     def calculate_fdc_participation(self, signatures: deque[bool]) -> Sequence[Message]:
-        mb = Message.builder()
+        mb = Message.builder().add(network=self.network, protocol=200)
         messages = []
         if (
             len(signatures) > 0

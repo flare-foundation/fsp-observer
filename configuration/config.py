@@ -40,6 +40,31 @@ class ChainId:
     @classmethod
     def all(cls):
         return [cls.COSTON, cls.SONGBIRD, cls.COSTON2, cls.FLARE]
+    
+class Protocols:
+    FTSO = 100
+    FDC = 200
+    # NOTE:(lightftso) is this ok? Fast updates doesnt have a protocol id
+    FAST_UPDATES = "fu"
+    STAKING = "staking"
+
+    @classmethod
+    def id_to_name(cls, protocol):
+        match protocol:
+            case cls.FTSO:
+                return "coston"
+            case cls.FDC:
+                return "songbird"
+            case "fu":
+                return "fast updates"
+            case "staking":
+                return "staking"
+            case _:
+                raise ValueError(f"Unknown protocol ({protocol=})")
+
+    @classmethod
+    def all(cls):
+        return [cls.FTSO, cls.FDC]
 
 
 class ConfigError(Exception):
