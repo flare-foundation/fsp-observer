@@ -42,6 +42,33 @@ class ChainId:
         return [cls.COSTON, cls.SONGBIRD, cls.COSTON2, cls.FLARE]
 
 
+class ProtocolId(int):
+    pass
+
+
+class Protocol:
+    FTSO = ProtocolId(100)
+    FDC = ProtocolId(200)
+    # NOTE:(janezicmatej) FSP only uses 1 byte for protocol id so we can use numbers
+    # larger than 256 without worry
+    FAST_UPDATES = ProtocolId(300)
+    STAKING = ProtocolId(400)
+
+    @classmethod
+    def id_to_name(cls, protocol: ProtocolId):
+        match protocol:
+            case cls.FTSO:
+                return "ftso"
+            case cls.FDC:
+                return "fdc"
+            case cls.FAST_UPDATES:
+                return "fast updates"
+            case cls.STAKING:
+                return "staking"
+            case _:
+                raise ValueError(f"Unknown protocol ({protocol=})")
+
+
 class ConfigError(Exception):
     pass
 

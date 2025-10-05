@@ -10,6 +10,7 @@ from py_flare_common.fsp.messaging.types import (
     SubmitSignatures,
 )
 
+from configuration.config import Protocol
 from configuration.types import Configuration
 
 from ..message import Message
@@ -62,7 +63,7 @@ def validate_round(
     mb_ftso = Message.builder().add(
         network=config.chain_id,
         round=round.voting_epoch,
-        protocol=100,
+        protocol=Protocol.FTSO,
     )
     extracted_ftso = extract_round_for_entity(round.ftso, entity, round.voting_epoch)
 
@@ -91,7 +92,7 @@ def validate_round(
     mb_fdc = Message.builder().add(
         network=config.chain_id,
         round=round.voting_epoch,
-        protocol=200,
+        protocol=Protocol.FDC,
     )
     extracted_fdc = extract_round_for_entity(round.fdc, entity, round.voting_epoch)
 
