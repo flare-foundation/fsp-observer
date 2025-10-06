@@ -7,10 +7,8 @@ from attrs import frozen
 from py_flare_common.ftso.median import FtsoMedian
 
 from configuration.config import Protocol
-from observer.fast_updates_manager import FastUpdatesManager
 from observer.message import Message, MessageLevel
-from observer.reward_epoch_manager import Entity
-from observer.signing_policy_manager import SigningPolicyManager
+from observer.reward_epoch_manager import Entity, SigningPolicy
 
 
 class Interval(Enum):
@@ -22,8 +20,10 @@ class Interval(Enum):
 @frozen
 class MinimalConditionsConfig:
     ftso_median_band_bips = 50
-    ftoo_median_threshold_bips = 8000
-    threshold = 0.8
+    ftso_median_threshold_bips = 8000
+    fast_updates_updates_per_block = 1.5
+    staking_threshold_bips = 8000
+    fdc_participation_threshold_bips = 8000
 
 
 class MinimalConditions:
@@ -77,7 +77,7 @@ class MinimalConditions:
 
         success_rate_bips = (total_hit * 10000) // total
 
-        if success_rate_bips < MinimalConditionsConfig.ftoo_median_threshold_bips:
+        if success_rate_bips < MinimalConditionsConfig.ftso_median_threshold_bips:
             messages.append(
                 mb.build(
                     MessageLevel.WARNING,
@@ -91,85 +91,42 @@ class MinimalConditions:
         return messages
 
     def calculate_ftso_block_latency_feeds(
-        self, entity: Entity, spm: SigningPolicyManager, fum: FastUpdatesManager
+        self,
+        entity: Entity,
+        sp: SigningPolicy,
+        last_update: int,
+        current_block: int,
     ) -> Sequence[Message]:
         mb = Message.builder().add(network=self.network, protocol=Protocol.FAST_UPDATES)
         messages = []
-        previous_total_active_weight = sum(
-            [e.normalized_weight for e in spm.previous_policy.entities]
-        )
-        previous_normalized_weight = (
-            spm.previous_policy.entity_mapper.by_identity_address[
-                entity.identity_address
-            ].normalized_weight
-        )
-        previous_number_of_updates = len(
-            list(
-                filter(
-                    lambda x: x.reward_epoch_id == spm.previous_policy.reward_epoch.id,
-                    fum.fast_updates,
-                )
-            )
-        )
-        previous_expected_updates = (
-            MinimalConditionsConfig.threshold
-            * previous_number_of_updates
-            * previous_normalized_weight
-            / previous_total_active_weight
+
+        # NOTE:(janezicmatej) we can always use the active signing policy to do the
+        # calculation even if previous update happened in the previous reward epoch
+
+        total_weight = sum(e.normalized_weight for e in sp.entities)
+        weight = entity.normalized_weight
+
+        per_block = MinimalConditionsConfig.fast_updates_updates_per_block
+        n_blocks = current_block - last_update
+        probability_bips = int(
+            10_000 * (1 - per_block * weight / total_weight) ** (n_blocks)
         )
 
-        total_active_weight = sum(
-            [e.normalized_weight for e in spm.current_policy.entities]
-        )
-        normalized_weight = spm.current_policy.entity_mapper.by_identity_address[
-            entity.identity_address
-        ].normalized_weight
-        number_of_updates = len(
-            list(
-                filter(
-                    lambda x: x.reward_epoch_id == spm.current_policy.reward_epoch.id,
-                    fum.fast_updates,
-                )
+        if probability_bips > 100:
+            return messages
+
+        level = MessageLevel.WARNING
+        if probability_bips <= 10:
+            level = MessageLevel.CRITICAL
+
+        messages.append(
+            mb.build(
+                level,
+                f"didn't submit fast update in {n_blocks} "
+                f"(false positive probability: {probability_bips / 100:.2f})%",
             )
-        )
-        expected_updates = (
-            MinimalConditionsConfig.threshold
-            * number_of_updates
-            * normalized_weight
-            / total_active_weight
         )
 
-        previous_actual_updates = len(
-            list(
-                filter(
-                    lambda x: x.address in fum.address_list
-                    and x.reward_epoch_id == spm.previous_policy.reward_epoch.id,
-                    fum.fast_updates,
-                )
-            )
-        )
-        actual_updates = len(
-            list(
-                filter(
-                    lambda x: x.address in fum.address_list
-                    and x.reward_epoch_id == spm.current_policy.reward_epoch.id,
-                    fum.fast_updates,
-                )
-            )
-        )
-        if not (
-            (previous_actual_updates + actual_updates)
-            >= (previous_expected_updates + expected_updates)
-        ):
-            messages.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "Not meeting minimal condition for fast updates "
-                        "in the latest interval"
-                    ),
-                )
-            )
         return messages
 
     def calculate_staking(
@@ -179,9 +136,8 @@ class MinimalConditions:
         messages = []
         for node in node_connections:
             if (
-                node_connections[node].count(True) / uptime_checks
-                < MinimalConditionsConfig.threshold
-            ):
+                node_connections[node].count(True) * 10_000
+            ) // uptime_checks < MinimalConditionsConfig.staking_threshold_bips:
                 messages.append(
                     mb.build(
                         MessageLevel.WARNING,
@@ -199,8 +155,8 @@ class MinimalConditions:
         messages = []
         if (
             len(signatures) > 0
-            and signatures.count(True) / len(signatures)
-            < MinimalConditionsConfig.threshold
+            and (signatures.count(True) * 10_000) // len(signatures)
+            < MinimalConditionsConfig.fdc_participation_threshold_bips
         ):
             messages.append(
                 mb.build(

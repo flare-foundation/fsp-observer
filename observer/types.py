@@ -191,7 +191,11 @@ class FastUpdateFeedsSubmitted:
     signing_policy_address: ChecksumAddress
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any], address: ChecksumAddress, tx_hash: HexBytes):
+    def from_dict(cls, data: EventData):
+        d = data["args"]
+        address = data["address"]
+        tx_hash = data["transactionHash"]
+
         return cls(
             voting_round_id=int(d["votingRoundId"]),
             emitter_address=address,
@@ -209,7 +213,11 @@ class FastUpdateFeeds:
     decimals: list[int]
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any], address: ChecksumAddress, tx_hash: HexBytes):
+    def from_dict(cls, data: EventData):
+        d = data["args"]
+        address = data["address"]
+        tx_hash = data["transactionHash"]
+
         return cls(
             voting_round_id=int(d["votingEpochId"]),
             emitter_address=address,
@@ -228,9 +236,14 @@ class VoterPreRegistered:
     reward_epoch_id: int
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any], address: ChecksumAddress, tx_hash: HexBytes):
+    def from_dict(cls, data: EventData):
+        d = data["args"]
+        block = data["blockNumber"]
+        address = data["address"]
+        tx_hash = data["transactionHash"]
+
         return cls(
-            block=int(d["block"]),
+            block=int(block),
             emitter_address=address,
             transaction_hash=tx_hash,
             voter=d["voter"],

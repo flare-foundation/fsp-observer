@@ -1,4 +1,3 @@
-from collections import deque
 from collections.abc import Sequence
 
 from attrs import define, field, frozen
@@ -20,7 +19,8 @@ class FastUpdate:
 
 @define
 class FastUpdatesManager:
-    fast_updates: deque[FastUpdate] = field(factory=deque)
+    last_update_block: int
+    last_update: FastUpdate
     address_list: set[ChecksumAddress] = field(factory=set)
 
     async def check_addresses(
@@ -36,30 +36,24 @@ class FastUpdatesManager:
         mb = Message.builder()
         messages = []
         level = MessageLevel.WARNING
-        fus = list(
-            filter(
-                lambda x: x.reward_epoch_id >= fast_update_re
-                and x.address in self.address_list,
-                self.fast_updates,
-            )
-        )
-        if len(fus) > 0:
-            fu = fus[-1]
-        else:
+
+        if self.last_update.reward_epoch_id != fast_update_re or not nr_of_feeds:
             return messages
-        rounded_nr_feeds = nr_of_feeds
-        # update arrays are whole bytes, so we need to round the number of feeds
-        # up to the nearest multiple of 8 if it is not one already
-        if nr_of_feeds % 8 != 0:
-            rounded_nr_feeds = nr_of_feeds + (8 - nr_of_feeds % 8)
-        if rounded_nr_feeds > 0 and len(fu.update_array) != rounded_nr_feeds:
+
+        # round up to the next multiple of 8 as update array is encoded in integer
+        # number of bytes
+        expected = nr_of_feeds + 7 - (nr_of_feeds - 1) % 8
+        submitted = len(self.last_update.update_array)
+
+        if expected != submitted:
             messages.append(
                 mb.build(
                     level,
                     (
-                        "Incorrect length of last update array, should be"
-                        f" {rounded_nr_feeds} but got {len(fu.update_array)}"
+                        f"incorrect number of sent feeds, should be {expected} but got "
+                        f"{submitted}"
                     ),
                 )
             )
+
         return messages
