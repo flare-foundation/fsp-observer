@@ -79,7 +79,7 @@ class MinimalConditions:
 
         if success_rate_bips < MinimalConditionsConfig.ftoo_median_threshold_bips:
             messages.append(
-                mb.build(
+                mb.add(network=config.chain_id).build(
                     MessageLevel.WARNING,
                     (
                         "not meeting minimal condition for FTSO anchor feeds in past "
@@ -162,7 +162,7 @@ class MinimalConditions:
             >= (previous_expected_updates + expected_updates)
         ):
             messages.append(
-                mb.build(
+                mb.add(network=config.chain_id).build(
                     MessageLevel.WARNING,
                     (
                         "Not meeting minimal condition for fast updates "
@@ -183,7 +183,7 @@ class MinimalConditions:
                 < MinimalConditionsConfig.threshold
             ):
                 messages.append(
-                    mb.build(
+                    mb.add(network=config.chain_id).build(
                         MessageLevel.WARNING,
                         (
                             f"Node {node} not meeting minimal condition for "
@@ -203,7 +203,7 @@ class MinimalConditions:
             < MinimalConditionsConfig.threshold
         ):
             messages.append(
-                mb.build(
+                mb.add(network=config.chain_id).build(
                     MessageLevel.WARNING,
                     (
                         "Not meeting minimal condition for FDC participation "

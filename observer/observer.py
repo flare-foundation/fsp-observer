@@ -789,7 +789,7 @@ async def observer_loop(config: Configuration) -> None:
                 mb = Message.builder()
                 if int(time.time() - preregistration_started_ts) > 60:
                     level = MessageLevel.CRITICAL
-                    message = mb.build(
+                    message = mb.add(network=config.chain_id).build(
                         level,
                         (
                             "Voter not preregistered after "
