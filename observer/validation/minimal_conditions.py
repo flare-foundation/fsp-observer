@@ -92,6 +92,7 @@ class MinimalConditions:
 
     def calculate_ftso_block_latency_feeds(
         self,
+        max_exponent: int,
         entity: Entity,
         sp: SigningPolicy,
         last_update: int,
@@ -108,22 +109,31 @@ class MinimalConditions:
 
         per_block = MinimalConditionsConfig.fast_updates_updates_per_block
         n_blocks = current_block - last_update
-        probability_bips = int(
-            10_000 * (1 - per_block * weight / total_weight) ** (n_blocks)
+        if n_blocks >= max_exponent:
+            n_blocks = max_exponent
+        probability_ppb = int(
+            1_000_000_000 * (1 - per_block * weight / total_weight) ** (n_blocks)
         )
-
-        if probability_bips > 100:
+        if n_blocks < max_exponent:
+            if probability_ppb <= 100:
+                level = MessageLevel.CRITICAL
+                messages.append(
+                    mb.build(
+                        level,
+                        f"didn't submit a fast update in {n_blocks} blocks",
+                    )
+                )
             return messages
 
         level = MessageLevel.WARNING
-        if probability_bips <= 10:
+        if probability_ppb <= 100:
             level = MessageLevel.CRITICAL
 
         messages.append(
             mb.build(
                 level,
-                f"didn't submit fast update in {n_blocks} "
-                f"(false positive probability: {probability_bips / 100:.2f})%",
+                f"didn't submit a fast update in {n_blocks} blocks "
+                f"(false positive probability: {probability_ppb / 10_000_000:.5f})%",
             )
         )
 
