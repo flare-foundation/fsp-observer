@@ -28,6 +28,7 @@ def _check_type(f: ValidateFn[FdcSubmit1, FdcSubmit2, SubmitSignatures]):
 def check_submit_1(
     submit_1: WParsedPayload[FdcSubmit1] | None,
     message_builder: MessageBuilder,
+    extracted_round: "ExtractedEntityVotingRound[FdcSubmit1, FdcSubmit2, SubmitSignatures]",  # noqa: E501
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -37,7 +38,7 @@ def check_submit_1(
     # we perform the following checks:
     # - submit1 exists -> error
 
-    if submit_1 is not None:
+    if submit_1 is not None or extracted_round.submit_1.late is not None:
         issues.append(mb.build(MessageLevel.ERROR, "found submit1 transaction"))
 
     return issues
@@ -59,10 +60,9 @@ def check_submit_2(
     # length matching the number of requests in the round and bit vote must dominate
     # consensus bit vote.
     # we perform the following checks:
-    # - submit2 doesnt't exist -> error
+    # - submit2 doesnt't exist in the correct interval -> error
     # - submit2 exists but bit vote length doesn't match number of requests -> error
     # - submit2 exists but bit vote does not dominate consensus bit vote -> error
-    # - submit2 exists but was sent before or after submission window -> warning
 
     if not round.fdc.consensus_bitvote:
         return []
@@ -85,8 +85,34 @@ def check_submit_2(
     sorted_requests = round.fdc.requests.sorted()
     assert len(sorted_requests) == n_requests
 
+    early = extracted_round.submit_2.early
+    late = extracted_round.submit_2.late
+    # TODO: (miha.gyergyek.aflabs) this should be configurable
+    level = MessageLevel.ERROR
+    message: str = ""
+    if early and late:
+        early_tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        late_tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
+        message = (
+            "submit2 transactions sent outside correct time interval. "
+            f"Before: {early_tx_hashes}, "
+            f"after: {late_tx_hashes}"
+        )
+    elif early and not late:
+        early_tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        message = (
+            f"submit2 transactions sent before correct time interval: {early_tx_hashes}"
+        )
+    elif late and not early:
+        late_tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
+        message = (
+            f"submit2 transactions sent after correct time interval: {late_tx_hashes}"
+        )
+    elif not early and not late:
+        message = "no submit2 transaction"
+
     if submit_2 is None:
-        issues.append(mb.build(MessageLevel.ERROR, "no submit2 transaction"))
+        issues.append(mb.build(level, message))
 
     if submit_2 is not None:
         bit_vector = submit_2.parsed_payload.payload.bit_vector
@@ -114,26 +140,8 @@ def check_submit_2(
                         )
                     )
 
-    if early := extracted_round.submit_2.early:
-        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                (
-                    "submit2 transactions sent before correct time interval: "
-                    f"{tx_hashes}"
-                ),
-            )
-        )
-
-    if late := extracted_round.submit_2.late:
-        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                (f"submit2 transactions sent after correct time interval: {tx_hashes}"),
-            )
-        )
+        if early or late:
+            issues.append(mb.build(level, message))
 
     return issues
 
@@ -168,10 +176,24 @@ def check_submit_signatures(
     if not round.fdc.consensus_bitvote:
         return []
 
-    if submit_2 is None and submit_signatures is None:
-        issues.append(
-            mb.build(MessageLevel.ERROR, "no submitSignatures transaction"),
+    early = extracted_round.submit_signatures.early
+    # TODO: (miha.gyergyek.aflabs) this should be configurable
+    level = MessageLevel.ERROR
+    message: str = ""
+    if early := extracted_round.submit_signatures.early:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        message = (
+            "submit signatures transactions sent before correct time "
+            f"interval: {tx_hashes}"
         )
+
+    if submit_2 is None and submit_signatures is None:
+        if not early:
+            issues.append(
+                mb.build(MessageLevel.ERROR, "no submitSignatures transaction"),
+            )
+        else:
+            issues.append(mb.build(level, message))
 
     if submit_2 is not None and submit_signatures is None:
         # TODO:(matej) move this to py-flare-common
@@ -197,12 +219,17 @@ def check_submit_signatures(
         )
 
         if submit_2_correct_length and submit_2_dominates:
-            issues.append(
-                mb.build(
-                    MessageLevel.CRITICAL,
-                    "no submitSignatures transaction, causing reveal offence",
-                ),
-            )
+            if not early:
+                issues.append(
+                    mb.build(
+                        MessageLevel.CRITICAL,
+                        "no submitSignatures transaction, causing reveal offence",
+                    ),
+                )
+            else:
+                level = MessageLevel.CRITICAL
+                message += ", causing reveal offence"
+                issues.append(mb.build(level, message))
 
     if submit_signatures is not None:
         deadline = max(
@@ -217,6 +244,9 @@ def check_submit_signatures(
                     "no submitSignatures during grace period, causing loss of rewards",
                 )
             )
+
+        if early:
+            issues.append(mb.build(level, message))
 
     if submit_signatures is not None and finalization is not None:
         s = Signature.from_parsed_signature(
@@ -233,18 +263,6 @@ def check_submit_signatures(
                     "submitSignatures signature doesn't match finalization",
                 ),
             )
-
-    if early := extracted_round.submit_signatures.early:
-        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                (
-                    "submit signatures transactions sent before correct time "
-                    f"interval: {tx_hashes}"
-                ),
-            )
-        )
 
     if len(issues) == 0:
         round.submitted_signatures = True

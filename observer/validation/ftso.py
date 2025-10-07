@@ -43,7 +43,19 @@ def check_submit_1(
     # - submit1 exists but commit hash length isn't 32 -> error
     # - submit1 exists but was sent before or after submission window -> warning
 
-    if submit_1 is None:
+    if late := extracted_round.submit_1.late:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
+        # TODO: (@miha.gyergyek.aflabs) Eventually configurable
+        # level = MessageLevel.WARNING
+        level = MessageLevel.ERROR
+        issues.append(
+            mb.build(
+                level,
+                (f"submit1 transactions sent after correct time interval: {tx_hashes}"),
+            )
+        )
+
+    if submit_1 is None and not late:
         issues.append(mb.build(MessageLevel.ERROR, "no submit1 transaction"))
 
     if submit_1 is not None:
@@ -55,27 +67,6 @@ def check_submit_1(
                     f"submit1 commit hash unexpeted length ({hash_len}), expected 32",
                 )
             )
-
-    if early := extracted_round.submit_1.early:
-        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                (
-                    "submit1 transactions sent before correct time interval: "
-                    f"{tx_hashes}"
-                ),
-            )
-        )
-
-    if late := extracted_round.submit_1.late:
-        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                (f"submit1 transactions sent after correct time interval: {tx_hashes}"),
-            )
-        )
 
     return issues
 
@@ -98,23 +89,44 @@ def check_submit_2(
     # Additionally decoded ftso values must have values that aren't null and
     # are in range of minimal conditions
     # we perform the following checks:
-    # - submit1 doesn't exist and submit2 doesn't exist -> error
-    # - submit1 exists and submit2 doesn't -> reveal offence
+    # - submit1 doesn't exist and submit2 doesn't exist in the right interval -> error
+    # - submit1 exists and submit2 doesn't in the right interval -> reveal offence
     # - both exist but reveal hash doesn't match commit hash -> reveal offence
     # - ftso values have null values -> warning
     # - ftso value have values that aren't in range of minimal conditions -> warning
     # - ftso values have incorrect length -> warning
-    # - submit2 exists but was sent before or after submission window -> warning
 
-    if submit_1 is None and submit_2 is None:
-        issues.append(mb.build(MessageLevel.ERROR, "no submit2 transaction"))
-
-    if submit_1 is not None and submit_2 is None:
-        issues.append(
-            mb.build(
-                MessageLevel.CRITICAL, "no submit2 transaction, causing reveal offence"
-            )
+    early = extracted_round.submit_2.early
+    late = extracted_round.submit_2.late
+    # TODO: (miha.gyergyek.aflabs) this should be configurable
+    level = MessageLevel.ERROR
+    message: str = ""
+    if early and late:
+        early_tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        late_tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
+        message = (
+            "submit2 transactions sent outside correct time interval. "
+            f"Before: {early_tx_hashes}, "
+            f"after: {late_tx_hashes}"
         )
+    elif early and not late:
+        early_tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        message = (
+            f"submit2 transactions sent before correct time interval: {early_tx_hashes}"
+        )
+    elif late and not early:
+        late_tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
+        message = (
+            f"submit2 transactions sent after correct time interval: {late_tx_hashes}"
+        )
+    elif not early and not late:
+        message = "no submit2 transaction"
+
+    if submit_2 is None:
+        if submit_1 is not None:
+            level = MessageLevel.CRITICAL
+            message += ". This caused a reveal offence"
+        issues.append(mb.build(level, message))
 
     if submit_1 is not None and submit_2 is not None:
         # TODO:(matej) should just build back from parsed message
@@ -182,26 +194,8 @@ def check_submit_2(
             #         )
             #     )
 
-    if early := extracted_round.submit_2.early:
-        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                (
-                    "submit2 transactions sent before correct time interval: "
-                    f"{tx_hashes}"
-                ),
-            )
-        )
-
-    if late := extracted_round.submit_2.late:
-        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in late])
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                (f"submit2 transactions sent after correct time interval: {tx_hashes}"),
-            )
-        )
+        if early or late:
+            issues.append(mb.build(level, message))
 
     return issues
 
@@ -225,15 +219,28 @@ def check_submit_signatures(
     # the signature must be deposited before the end of grace period or finalization on
     # chain (whichever is later)
     # we perform the following checks:
-    # - submitSignatures doesn't exist -> error
+    # - submitSignatures doesn't exist in the correct interval -> error
     # - submitSignature was sent after the deadline -> warning
     # - signature doesn't match finalization -> error
-    # - submitSignature exists but was sent before or after submission window -> warning
+
+    early = extracted_round.submit_signatures.early
+    # TODO: (miha.gyergyek.aflabs) this should be configurable
+    level = MessageLevel.ERROR
+    message: str = ""
+    if early := extracted_round.submit_signatures.early:
+        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
+        message = (
+            "submit signatures transactions sent before correct time "
+            f"interval: {tx_hashes}"
+        )
 
     if submit_signatures is None:
-        issues.append(
-            mb.build(MessageLevel.ERROR, "no submitSignatures transaction"),
-        )
+        if not early:
+            issues.append(
+                mb.build(MessageLevel.ERROR, "no submitSignatures transaction"),
+            )
+        else:
+            issues.append(mb.build(level, message))
 
     if submit_signatures is not None:
         deadline = max(
@@ -248,6 +255,9 @@ def check_submit_signatures(
                     "no submitSignatures during grace period, causing loss of rewards",
                 )
             )
+
+        if early:
+            issues.append(mb.build(level, message))
 
     if submit_signatures is not None and finalization is not None:
         s = Signature.from_parsed_signature(
@@ -264,17 +274,5 @@ def check_submit_signatures(
                     "submitSignatures signature doesn't match finalization",
                 ),
             )
-
-    if early := extracted_round.submit_signatures.early:
-        tx_hashes = ", ".join([tx.wtx_data.hash.to_0x_hex() for tx in early])
-        issues.append(
-            mb.build(
-                MessageLevel.WARNING,
-                (
-                    "submit signatures transactions sent before correct time "
-                    f"interval: {tx_hashes}"
-                ),
-            )
-        )
 
     return issues
