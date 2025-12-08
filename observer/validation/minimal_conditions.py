@@ -140,7 +140,7 @@ class MinimalConditions:
         return messages
 
     def calculate_staking(
-        self, uptime_checks: int, node_connections: dict[str, deque]
+        self, uptime_checks: int, node_connections: dict[str, deque[bool]]
     ) -> Sequence[Message]:
         mb = Message.builder().add(network=self.network, protocol=Protocol.STAKING)
         messages = []

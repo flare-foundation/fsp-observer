@@ -4,6 +4,7 @@ import logging
 import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Sequence
+from functools import partial
 from itertools import chain
 from typing import Any, Self
 
@@ -315,19 +316,6 @@ async def observer_loop(config: Configuration) -> None:
         middleware=[ExtraDataToPOAMiddleware],
     )
 
-    # log_issue(
-    #     config,
-    #     Issue(
-    #         IssueLevel.INFO,
-    #         MessageBuilder()
-    #         .add_network(config.chain_id)
-    #         .add_protocol(100)
-    #         .add_round(VotingEpoch(12, None))
-    #         .build_with_message("testing message" + str(config.notification)),
-    #     ),
-    # )
-    # return
-
     # reasignments for quick access
     ve = config.epoch.voting_epoch
     # re = config.epoch.reward_epoch
@@ -379,18 +367,6 @@ async def observer_loop(config: Configuration) -> None:
             f"Initialized observer for identity_address={tia}",
         ),
     )
-    # target_voter = signing_policy.entity_mapper.by_identity_address[tia]
-    # notify_discord(
-    #     config,
-    #     f"flare-observer initialized\n\n"
-    #     f"chain: {config.chain}\n"
-    #     f"submit address: {target_voter.submit_address}\n"
-    #     f"submit signatures address: {target_voter.submit_signatures_address}\n",
-    #     # f"this address has voting power of: {signing_policy.voter_weight(tia)}\n\n"
-    #     # f"starting in voting round: {voting_round.next.id} "
-    #     # f"(current: {voting_round.id})\n"
-    #     # f"current reward epoch: {current_rid}",
-    # )
 
     cron_time = time.time()
 
@@ -426,8 +402,6 @@ async def observer_loop(config: Configuration) -> None:
     spm = SigningPolicyManager(signing_policy, signing_policy)
     rm = RewardManager()
 
-    # start listener
-    # print("Listener started from block number", block_number)
     # check transactions for submit transactions
     target_function_signatures = {
         config.contracts.Submission.functions[
@@ -443,16 +417,26 @@ async def observer_loop(config: Configuration) -> None:
         .for_reward_epoch(reward_epoch.id)
     )
     last_minimal_conditions_check = int(time.time())
-    last_ping = time.time()
-    last_registration_check = time.time()
+    last_ping = int(time.time())
+    last_registration_check = int(time.time())
 
-    node_connections = defaultdict(deque)
+    uptime_validation_frequency = 60
+    node_connections = defaultdict(
+        partial(
+            deque[bool],
+            maxlen=minimal_conditions.time_period.value // uptime_validation_frequency,
+        )
+    )
     uptime_validations = 0
 
-    medians: deque[list[FtsoMedian]] = deque()
-    entity_votes: deque[list[int | None]] = deque()
+    medians: deque[list[FtsoMedian]] = deque(
+        maxlen=minimal_conditions.time_period.value // 90
+    )
+    entity_votes: deque[list[int | None]] = deque(
+        maxlen=minimal_conditions.time_period.value // 90
+    )
 
-    signatures: deque[bool] = deque()
+    signatures: deque[bool] = deque(maxlen=minimal_conditions.time_period.value // 90)
 
     voter_registration_started: bool = False
     voter_registration_started_ts: int = 0
@@ -460,6 +444,9 @@ async def observer_loop(config: Configuration) -> None:
 
     nr_of_feeds: int = 0
     fast_update_re: int = 0
+
+    messages: list[Message] = []
+    min_cond_messages: list[Message] = []
 
     while True:
         latest_block = await w.eth.block_number
@@ -684,14 +671,14 @@ async def observer_loop(config: Configuration) -> None:
                             except Exception:
                                 pass
 
-            messages: list[Message] = []
+            messages.clear()
             messages.extend(tx_messages)
             messages.extend(event_messages)
             entity = signing_policy.entity_mapper.by_identity_address[tia]
 
             # perform all minimal condition checks here
             if int(time.time() - last_minimal_conditions_check) > 60:
-                min_cond_messages: list[Message] = []
+                min_cond_messages.clear()
 
                 min_cond_messages.extend(
                     minimal_conditions.calculate_ftso_block_latency_feeds(
@@ -721,19 +708,18 @@ async def observer_loop(config: Configuration) -> None:
 
                 last_minimal_conditions_check = int(time.time())
 
+            node_ids = [
+                node_id_to_representation(node.node_id) for node in entity.nodes
+            ]
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "platform.getCurrentValidators",
-                "params": {
-                    "nodeIDs": [
-                        node_id_to_representation(node.node_id) for node in entity.nodes
-                    ]
-                },
+                "params": {"nodeIDs": node_ids},
             }
-            if int(time.time() - last_ping) > 90:
-                try:
-                    if len([node.node_id for node in entity.nodes]) > 0:
+            if int(time.time() - last_ping) > uptime_validation_frequency:
+                if len(node_ids) > 0:
+                    try:
                         response = requests.post(
                             config.p_chain_rpc_url, json=payload, timeout=10
                         )
@@ -741,24 +727,22 @@ async def observer_loop(config: Configuration) -> None:
                         result = response.json()
                         if "error" in result:
                             LOGGER.warning("Error calling API: check params")
+                            continue
 
-                        uptime_validations += 1
+                        if (
+                            uptime_validations
+                            < minimal_conditions.time_period.value
+                            // uptime_validation_frequency
+                        ):
+                            uptime_validations += 1
                         for node in result["result"]["validators"]:
                             node_connections[node["nodeID"]].append(node["connected"])
-                    last_ping = time.time()
-                    while (
-                        uptime_validations > minimal_conditions.time_period.value // 90
-                    ):
-                        uptime_validations -= 1
-                        for node in node_connections:
-                            node_connections[node].popleft()
+                    except requests.RequestException as e:
+                        LOGGER.warning(f"Error calling API: {e}")
+                last_ping = int(time.time())
 
-                except requests.RequestException as e:
-                    LOGGER.warning(f"Error calling API: {e}")
-                    last_ping = time.time()
-
-            if time.time() - cron_time > 60 * 60:
-                cron_time = time.time()
+            if int(time.time()) - cron_time > 60 * 60:
+                cron_time = int(time.time())
                 check_functions = [
                     entity.check_addresses(config, w),
                     fum.check_addresses(config, w),
@@ -778,18 +762,12 @@ async def observer_loop(config: Configuration) -> None:
                         entity_votes.append(votes)
                     else:
                         entity_votes.append([])
-                # a new vote is expected every 90 seconds
-                while len(medians) > minimal_conditions.time_period.value // 90:
-                    medians.popleft()
-                    entity_votes.popleft()
             for r in rounds:
                 LOGGER.info(f"processed round {r.voting_epoch.id}")
                 messages.extend(validate_round(r, signing_policy, entity, config))
 
             # prepare new data for FDC participation
             signatures.extend([round.submitted_signatures for round in rounds])
-            while len(signatures) > minimal_conditions.time_period.value // 90:
-                signatures.popleft()
 
             # reporting on registration and preregistration once per minute
             interval = 60
