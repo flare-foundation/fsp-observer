@@ -717,28 +717,30 @@ async def observer_loop(config: Configuration) -> None:
                 "method": "platform.getCurrentValidators",
                 "params": {"nodeIDs": node_ids},
             }
-            if int(time.time() - last_ping) > uptime_validation_frequency:
-                if len(node_ids) > 0:
-                    try:
-                        response = requests.post(
-                            config.p_chain_rpc_url, json=payload, timeout=10
-                        )
-                        response.raise_for_status()
-                        result = response.json()
-                        if "error" in result:
-                            LOGGER.warning("Error calling API: check params")
-                            continue
+            if (
+                int(time.time() - last_ping) > uptime_validation_frequency
+                and len(node_ids) > 0
+            ):
+                try:
+                    response = requests.post(
+                        config.p_chain_rpc_url, json=payload, timeout=10
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+                    if "error" in result:
+                        LOGGER.warning("Error calling API: check params")
+                        continue
 
-                        if (
-                            uptime_validations
-                            < minimal_conditions.time_period.value
-                            // uptime_validation_frequency
-                        ):
-                            uptime_validations += 1
-                        for node in result["result"]["validators"]:
-                            node_connections[node["nodeID"]].append(node["connected"])
-                    except requests.RequestException as e:
-                        LOGGER.warning(f"Error calling API: {e}")
+                    if (
+                        uptime_validations
+                        < minimal_conditions.time_period.value
+                        // uptime_validation_frequency
+                    ):
+                        uptime_validations += 1
+                    for node in result["result"]["validators"]:
+                        node_connections[node["nodeID"]].append(node["connected"])
+                except requests.RequestException as e:
+                    LOGGER.warning(f"Error calling API: {e}")
                 last_ping = int(time.time())
 
             if int(time.time()) - cron_time > 60 * 60:
