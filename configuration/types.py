@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Callable, Self
 
 from attrs import field, frozen
@@ -18,6 +19,7 @@ def abi_from_file_location(file_location):
 
 
 def event_signature(event_abi: ABIEvent) -> str:
+    assert "inputs" in event_abi
     params = ""
     for index, input in enumerate(event_abi["inputs"]):
         if index > 0:
@@ -25,6 +27,7 @@ def event_signature(event_abi: ABIEvent) -> str:
 
         if input["type"] == "tuple[]":
             params += "("
+            assert "components" in input
             for index2, tuple_component in enumerate(input["components"]):
                 if index2 > 0:
                     params += ","
@@ -35,6 +38,7 @@ def event_signature(event_abi: ABIEvent) -> str:
 
         elif input["type"] == "tuple":
             params += "("
+            assert "components" in input
             for index2, tuple_component in enumerate(input["components"]):
                 if index2 > 0:
                     params += ","
@@ -51,6 +55,31 @@ def event_signature(event_abi: ABIEvent) -> str:
 
 def function_signature(function_name: str) -> str:
     return Web3.keccak(text=function_name).hex()[:8]
+
+
+def canonicalize_base_type(base: str) -> str:
+    if base == "uint":
+        return "uint256"
+    if base == "int":
+        return "int256"
+    return base
+
+
+def full_type_from_param(param) -> str:
+    t = param["type"]
+    m = re.match(r"([^\[]+)(.*)$", t)
+    # parameter types will match this regex
+    assert m
+    base = m.group(1)
+    suffix = m.group(2) or ""
+
+    if base == "tuple":
+        comps = param.get("components", [])
+        inner = ",".join(full_type_from_param(c) for c in comps)
+        return f"({inner}){suffix}"
+    else:
+        base_canon = canonicalize_base_type(base)
+        return f"{base_canon}{suffix}"
 
 
 @frozen
@@ -79,8 +108,9 @@ class Function:
 
     def to_full_name(self):
         assert "inputs" in self.abi
-        inputs = [i["type"] for i in self.abi["inputs"]]  # type: ignore
-        return f"{self.name}({','.join(inputs)})"
+        inputs = self.abi["inputs"]
+        types = ",".join(full_type_from_param(inp) for inp in inputs)
+        return f"{self.name}({types})"
 
     def __str__(self) -> str:
         return f"Function: {self.to_full_name()}, signature: {self.signature}"
