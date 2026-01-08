@@ -38,7 +38,7 @@ def check_submit_1(
     # we perform the following checks:
     # - submit1 exists -> error
 
-    if submit_1 is not None or extracted_round.submit_1.late is not None:
+    if submit_1 is not None or extracted_round.submit_1.late:
         issues.append(mb.build(MessageLevel.ERROR, "found submit1 transaction"))
 
     return issues
