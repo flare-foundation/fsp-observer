@@ -244,6 +244,7 @@ class NotificationGeneric:
 @frozen
 class Notification:
     discord: NotificationDiscord
+    discord_embed: NotificationDiscord
     slack: NotificationSlack
     telegram: NotificationTelegram
     generic: NotificationGeneric

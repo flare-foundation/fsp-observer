@@ -55,7 +55,13 @@ from observer.validation.minimal_conditions import MinimalConditions
 from observer.validation.validation import extract_round_for_entity, validate_round
 
 from .message import Message, MessageLevel
-from .notification import notify_discord, notify_generic, notify_slack, notify_telegram
+from .notification import (
+    notify_discord,
+    notify_discord_embed,
+    notify_generic,
+    notify_slack,
+    notify_telegram,
+)
 from .voting_round import (
     VotingRoundManager,
     WTxData,
@@ -294,11 +300,10 @@ def log_message(config: Configuration, message: Message):
 
     n = config.notification
 
-    lvl_msg = f"{message.level.name} {message.message}"
-
-    notify_discord(n.discord, lvl_msg)
-    notify_slack(n.slack, lvl_msg)
-    notify_telegram(n.telegram, lvl_msg)
+    notify_discord(n.discord, message)
+    notify_discord_embed(n.discord_embed, message)
+    notify_slack(n.slack, message)
+    notify_telegram(n.telegram, message)
     notify_generic(n.generic, message)
 
 

@@ -100,6 +100,11 @@ def get_notification_config() -> Notification:
     if discord_webhook is not None:
         discord.extend(discord_webhook.split(","))
 
+    discord_embed_webhook = os.environ.get("NOTIFICATION_DISCORD_EMBED_WEBHOOK")
+    discord_embed = []
+    if discord_embed_webhook is not None:
+        discord_embed.extend(discord_embed_webhook.split(","))
+
     slack_webhook = os.environ.get("NOTIFICATION_SLACK_WEBHOOK")
     slack = []
     if slack_webhook is not None:
@@ -120,6 +125,7 @@ def get_notification_config() -> Notification:
 
     return Notification(
         discord=NotificationDiscord(discord),
+        discord_embed=NotificationDiscord(discord_embed),
         slack=NotificationSlack(slack),
         telegram=NotificationTelegram(telegram),
         generic=NotificationGeneric(generic),
