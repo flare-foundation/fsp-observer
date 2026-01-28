@@ -3,7 +3,7 @@ import enum
 import io
 from typing import Self
 
-from attrs import define, frozen
+from attrs import define
 from py_flare_common.fsp.epoch.epoch import VotingEpoch
 
 from configuration.config import ChainId, Protocol, ProtocolId
@@ -17,12 +17,12 @@ class MessageLevel(enum.Enum):
     CRITICAL = 50
 
 
-@frozen
+@define
 class Message:
     level: MessageLevel
     message: str
+    network: int
 
-    network: int | None = None
     round: VotingEpoch | None = None
     protocol: ProtocolId | None = None
 

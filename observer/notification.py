@@ -95,14 +95,12 @@ def notify_discord_embed(config: NotificationDiscord, message: Message) -> None:
             "text": "Flare Network",
             "icon_url": get_icon_url(ChainId.FLARE),
         },
-    }
-
-    if message.network is not None:
-        embed["thumbnail"] = {
+        "thumbnail": {
             "url": get_icon_url(message.network),
             "height": 32,
             "width": 32,
-        }
+        },
+    }
 
     for u in config.webhook_url:
         notify(

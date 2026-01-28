@@ -299,6 +299,8 @@ def log_message(config: Configuration, message: Message):
     LOGGER.log(message.level.value, message.message)
 
     n = config.notification
+    # TODO:(@janezicmatej) this should be done eariler in the message lifecycle
+    message.network = config.chain_id
 
     notify_discord(n.discord, message)
     notify_discord_embed(n.discord_embed, message)
