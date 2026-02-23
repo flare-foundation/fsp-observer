@@ -163,6 +163,8 @@ def get_config() -> Configuration:
     _fee_threshold = os.environ.get("FEE_THRESHOLD", "25")
     fee_threshold = int(_fee_threshold)
 
+    log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+
     config = Configuration(
         rpc_url=rpc_url,
         p_chain_rpc_url=p_chain_rpc_url,
@@ -173,6 +175,7 @@ def get_config() -> Configuration:
         notification=get_notification_config(),
         fee_threshold=fee_threshold,
         metrics=get_metrics_config(),
+        log_level=log_level,
     )
 
     return config

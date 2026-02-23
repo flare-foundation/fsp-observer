@@ -269,3 +269,4 @@ class Configuration:
     notification: Notification
     fee_threshold: int
     metrics: MetricsConfig
+    log_level: str
