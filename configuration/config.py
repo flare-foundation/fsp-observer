@@ -8,6 +8,7 @@ from .types import (
     Configuration,
     Contracts,
     Epoch,
+    MetricsConfig,
     Notification,
     NotificationDiscord,
     NotificationGeneric,
@@ -132,6 +133,13 @@ def get_notification_config() -> Notification:
     )
 
 
+def get_metrics_config() -> MetricsConfig:
+    enabled = os.environ.get("METRICS_ENABLED", "false").lower() == "true"
+    port = int(os.environ.get("METRICS_PORT", "8000"))
+    address = os.environ.get("METRICS_ADDRESS", "0.0.0.0")
+    return MetricsConfig(enabled=enabled, port=port, address=address)
+
+
 def get_config() -> Configuration:
     rpc_base_url = os.environ.get("RPC_BASE_URL")
     if rpc_base_url is None:
@@ -164,6 +172,7 @@ def get_config() -> Configuration:
         epoch=get_epoch(chain_id),
         notification=get_notification_config(),
         fee_threshold=fee_threshold,
+        metrics=get_metrics_config(),
     )
 
     return config

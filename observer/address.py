@@ -4,6 +4,7 @@ from eth_typing import ChecksumAddress
 from web3 import AsyncWeb3
 
 from configuration.types import Configuration
+from observer import metrics
 from observer.message import Message, MessageLevel
 
 
@@ -20,6 +21,9 @@ class AddressChecker:
 
         for name, addr in address_list:
             balance = await w.eth.get_balance(addr, "latest")
+            metrics.ADDRESS_BALANCE.labels(
+                identity_address=metrics._ia, address=addr, role=name
+            ).set(balance)
             if balance < config.fee_threshold * 1e18:
                 level = MessageLevel.WARNING
                 if balance <= 5e18:

@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from attrs import define
 
 from configuration.types import Contract, Contracts
+from observer import metrics
 from observer.message import Message, MessageLevel
 
 
@@ -21,6 +22,9 @@ class ContractManager:
         mb = Message.builder()
         messages = []
         if address != self.contracts.Submission.address:
+            metrics.CONTRACT_ADDRESS_WRONG.labels(
+                identity_address=metrics._ia, contract="submission"
+            ).inc()
             messages.append(
                 mb.build(MessageLevel.CRITICAL, "Incorrect Submmission address")
             )
@@ -30,5 +34,8 @@ class ContractManager:
         mb = Message.builder()
         messages = []
         if address != self.contracts.Relay.address:
+            metrics.CONTRACT_ADDRESS_WRONG.labels(
+                identity_address=metrics._ia, contract="relay"
+            ).inc()
             messages.append(mb.build(MessageLevel.CRITICAL, "Incorrect Relay address"))
         return messages
