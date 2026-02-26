@@ -10,6 +10,7 @@ from py_flare_common.fsp.messaging.types import (
 )
 from py_flare_common.ftso.commit import commit_hash
 
+from .. import metrics
 from ..message import Message, MessageBuilder, MessageLevel
 from ..reward_epoch_manager import Entity
 from ..types import ProtocolMessageRelayed
@@ -124,6 +125,9 @@ def check_submit_2(
 
     if submit_2 is None:
         if submit_1 is not None:
+            metrics.REVEAL_OFFENCE.labels(
+                identity_address=metrics._ia, protocol="ftso"
+            ).inc()
             level = MessageLevel.CRITICAL
             message += ". This caused a reveal offence"
         issues.append(mb.build(level, message))
@@ -137,6 +141,9 @@ def check_submit_2(
         hashed = commit_hash(entity.submit_address, round.voting_epoch.id, rnd, feed_v)
 
         if submit_1.parsed_payload.payload.commit_hash.hex() != hashed:
+            metrics.REVEAL_OFFENCE.labels(
+                identity_address=metrics._ia, protocol="ftso"
+            ).inc()
             issues.append(
                 mb.build(
                     MessageLevel.CRITICAL,
@@ -249,6 +256,9 @@ def check_submit_signatures(
         )
 
         if submit_signatures.wtx_data.timestamp > deadline:
+            metrics.SIGNATURE_GRACE_PERIOD_MISSED.labels(
+                identity_address=metrics._ia, protocol="ftso"
+            ).inc()
             issues.append(
                 mb.build(
                     MessageLevel.WARNING,
@@ -268,6 +278,9 @@ def check_submit_signatures(
         ).to_checksum_address()
 
         if addr != entity.signing_policy_address:
+            metrics.SIGNATURE_MISMATCH.labels(
+                identity_address=metrics._ia, protocol="ftso"
+            ).inc()
             issues.append(
                 mb.build(
                     MessageLevel.ERROR,

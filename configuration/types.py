@@ -1,6 +1,7 @@
 import json
 import re
-from typing import Callable, Self
+from collections.abc import Callable
+from typing import Self
 
 from attrs import field, frozen
 from eth_typing import ABI, ABIEvent, ABIFunction, ChecksumAddress
@@ -251,6 +252,13 @@ class Notification:
 
 
 @frozen
+class MetricsConfig:
+    enabled: bool
+    port: int
+    address: str
+
+
+@frozen
 class Configuration:
     identity_address: ChecksumAddress
     chain_id: int
@@ -260,3 +268,5 @@ class Configuration:
     epoch: Epoch
     notification: Notification
     fee_threshold: int
+    metrics: MetricsConfig
+    log_level: str

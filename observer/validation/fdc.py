@@ -8,6 +8,7 @@ from py_flare_common.fsp.messaging.types import (
     SubmitSignatures,
 )
 
+from .. import metrics
 from ..message import Message, MessageBuilder, MessageLevel
 from ..reward_epoch_manager import Entity
 from ..types import ProtocolMessageRelayed
@@ -219,6 +220,9 @@ def check_submit_signatures(
         )
 
         if submit_2_correct_length and submit_2_dominates:
+            metrics.REVEAL_OFFENCE.labels(
+                identity_address=metrics._ia, protocol="fdc"
+            ).inc()
             if not early:
                 issues.append(
                     mb.build(
@@ -238,6 +242,9 @@ def check_submit_signatures(
         )
 
         if submit_signatures.wtx_data.timestamp > deadline:
+            metrics.SIGNATURE_GRACE_PERIOD_MISSED.labels(
+                identity_address=metrics._ia, protocol="fdc"
+            ).inc()
             issues.append(
                 mb.build(
                     MessageLevel.WARNING,
@@ -257,6 +264,9 @@ def check_submit_signatures(
         ).to_checksum_address()
 
         if addr != entity.signing_policy_address:
+            metrics.SIGNATURE_MISMATCH.labels(
+                identity_address=metrics._ia, protocol="fdc"
+            ).inc()
             issues.append(
                 mb.build(
                     MessageLevel.ERROR,
