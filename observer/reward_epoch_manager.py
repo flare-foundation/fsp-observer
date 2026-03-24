@@ -7,6 +7,7 @@ from py_flare_common.fsp.epoch.epoch import RewardEpoch
 from web3 import AsyncWeb3
 
 from configuration.types import Configuration
+from observer import metrics
 from observer.address import AddressChecker
 
 from .message import Message, MessageLevel
@@ -261,6 +262,7 @@ class RewardManager:
             address=config.contracts.RewardManager.address,
         ).functions["getRewardEpochIdsWithClaimableRewards"]
         min_re, max_re = await claimable_func().call()
+        metrics.UNCLAIMED_REWARDS.clear()
         for address in addresses:
             for re in range(min_re, max_re + 1):
                 for claim_type in range(4):
@@ -272,6 +274,12 @@ class RewardManager:
                     # we are looking for claims that are not initialised
                     # and with non-zero amount
                     if not state[0] and state[1] > 0:
+                        metrics.UNCLAIMED_REWARDS.labels(
+                            identity_address=metrics.identity_address,
+                            address=address,
+                            reward_epoch=str(re),
+                            claim_type=str(claim_type),
+                        ).set(state[1])
                         messages.append(
                             mb.build(
                                 MessageLevel.WARNING,

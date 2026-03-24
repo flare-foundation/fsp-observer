@@ -251,6 +251,13 @@ class Notification:
 
 
 @frozen
+class MetricsConfig:
+    enabled: bool
+    port: int
+    address: str
+
+
+@frozen
 class Configuration:
     identity_address: ChecksumAddress
     chain_id: int
@@ -260,3 +267,5 @@ class Configuration:
     epoch: Epoch
     notification: Notification
     fee_threshold: int
+    metrics: MetricsConfig
+    log_level: str
