@@ -377,8 +377,9 @@ def _record_submit_metrics(
 
 async def observer_loop(config: Configuration) -> None:
     logging.getLogger().setLevel(config.log_level)
+    rpc_headers = {"x-apikey": config.rpc_api_key} if config.rpc_api_key else {}
     w = AsyncWeb3(
-        AsyncWeb3.AsyncHTTPProvider(config.rpc_url),
+        AsyncWeb3.AsyncHTTPProvider(config.rpc_url, request_kwargs={"headers": rpc_headers}),
         middleware=[ExtraDataToPOAMiddleware],
     )
 
@@ -967,8 +968,9 @@ async def observer_loop(config: Configuration) -> None:
                 and len(node_ids) > 0
             ):
                 try:
+                    p_chain_headers = {"x-apikey": config.rpc_api_key} if config.rpc_api_key else {}
                     response = requests.post(
-                        config.p_chain_rpc_url, json=payload, timeout=10
+                        config.p_chain_rpc_url, json=payload, headers=p_chain_headers, timeout=10
                     )
                     response.raise_for_status()
                     result = response.json()

@@ -269,3 +269,4 @@ class Configuration:
     fee_threshold: int
     metrics: MetricsConfig
     log_level: str
+    rpc_api_key: str | None = None
