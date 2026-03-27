@@ -245,11 +245,8 @@ async def get_signing_policy_events(
         config.contracts.FlareSystemsManager,
     ]
 
-    # Stable contract ABIs cover Songbird/Flare where VoterRegistered/VoterRemoved
-    # use uint24/uint256 rewardEpochId and flat publicKeyPart1/2 fields, and
-    # VoterRegistrationInfo uses uint24 rewardEpochId. Coston/Coston2 have received
-    # an upgraded version of these contracts. Both sets of topic hashes are registered
-    # so a single binary works on all chains without configuration.
+    # Coston/Coston2 run upgraded contracts with a different event ABI than Songbird/Flare.
+    # Registering both sets of topic hashes lets the same binary decode events on all chains.
     _stable_contracts = [
         Contract(
             "VoterRegistry_stable",
