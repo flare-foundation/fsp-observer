@@ -79,13 +79,20 @@ class VoterRegistered:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Self:
+        pk = d.get("publicKey")
+        if pk is not None:
+            # Coston/Coston2 upgraded contract: publicKey is a struct {x, y}
+            public_key = pk["x"].hex() + pk["y"].hex()
+        else:
+            # Songbird/Flare stable contract: two flat fields publicKeyPart1 / publicKeyPart2
+            public_key = d["publicKeyPart1"].hex() + d["publicKeyPart2"].hex()
         return cls(
             reward_epoch_id=int(d["rewardEpochId"]),
             voter=d["voter"],
             signing_policy_address=d["signingPolicyAddress"],
             submit_address=d["submitAddress"],
             submit_signatures_address=d["submitSignaturesAddress"],
-            public_key=d["publicKeyPart1"].hex() + d["publicKeyPart2"].hex(),
+            public_key=public_key,
             registration_weight=int(d["registrationWeight"]),
         )
 

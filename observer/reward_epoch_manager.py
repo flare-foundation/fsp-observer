@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from collections.abc import Sequence
 from typing import Self
 
@@ -8,7 +10,10 @@ from web3 import AsyncWeb3
 
 from configuration.types import Configuration
 from observer import metrics
+
 from observer.address import AddressChecker
+
+LOGGER = logging.getLogger(__name__)
 
 from .message import Message, MessageLevel
 from .types import (
@@ -206,6 +211,15 @@ class SigningPolicyBuilder:
 
         for i, voter in enumerate(self.signing_policy_initialized.voters):
             weight = self.signing_policy_initialized.weights[i]
+            if voter not in spa:
+                LOGGER.error(
+                    f"Signing policy voter {voter} has no VoterRegistered event "
+                    f"(reward_epoch={rid}, registered_spa={list(spa.keys())})"
+                )
+                raise KeyError(
+                    f"No VoterRegistered event found for signing policy address {voter} "
+                    f"in reward epoch {rid}"
+                )
             vre = vres[spa[voter]]
             vrie = vries[spa[voter]]
 
@@ -257,36 +271,59 @@ class RewardManager:
             entity.submit_address,
             entity.submit_signatures_address,
         ]
-        claimable_func = w.eth.contract(
+        reward_manager_contract = w.eth.contract(
             abi=config.contracts.RewardManager.abi,
             address=config.contracts.RewardManager.address,
-        ).functions["getRewardEpochIdsWithClaimableRewards"]
-        min_re, max_re = await claimable_func().call()
+        )
+        min_re, max_re = await reward_manager_contract.functions[
+            "getRewardEpochIdsWithClaimableRewards"
+        ]().call()
+        unclaimed_func = reward_manager_contract.functions["getUnclaimedRewardState"]
+
+        nr_epochs = max_re - min_re + 1
+        nr_tasks = len(addresses) * nr_epochs * 4
+        LOGGER.info(
+            f"Checking unclaimed rewards: epochs={min_re}..{max_re}"
+            f" | addresses={len(addresses)} | total_calls={nr_tasks}"
+        )
+
+        semaphore = asyncio.Semaphore(20)
+
+        async def _check(address: str, re: int, claim_type: int):
+            async with semaphore:
+                state = await unclaimed_func(address, re, claim_type).call()
+                return address, re, claim_type, state
+
+        tasks = [
+            _check(address, re, claim_type)
+            for address in addresses
+            for re in range(min_re, max_re + 1)
+            for claim_type in range(4)
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
         metrics.UNCLAIMED_REWARDS.clear()
-        for address in addresses:
-            for re in range(min_re, max_re + 1):
-                for claim_type in range(4):
-                    unclaimed_func = w.eth.contract(
-                        abi=config.contracts.RewardManager.abi,
-                        address=config.contracts.RewardManager.address,
-                    ).functions["getUnclaimedRewardState"]
-                    state = await unclaimed_func(address, re, claim_type).call()
-                    # we are looking for claims that are not initialised
-                    # and with non-zero amount
-                    if not state[0] and state[1] > 0:
-                        metrics.UNCLAIMED_REWARDS.labels(
-                            identity_address=metrics.identity_address,
-                            address=address,
-                            reward_epoch=str(re),
-                            claim_type=str(claim_type),
-                        ).set(state[1])
-                        messages.append(
-                            mb.build(
-                                MessageLevel.WARNING,
-                                (
-                                    f"Unclaimed rewards in reward epoch {re},"
-                                    f" claim type {claim_type}, amount {state[1]}"
-                                ),
-                            )
-                        )
+        for result in results:
+            if isinstance(result, Exception):
+                LOGGER.warning(f"Error checking unclaimed rewards: {result}")
+                continue
+            address, re, claim_type, state = result
+            # we are looking for claims that are not initialised
+            # and with non-zero amount
+            if not state[0] and state[1] > 0:
+                metrics.UNCLAIMED_REWARDS.labels(
+                    identity_address=metrics.identity_address,
+                    address=address,
+                    reward_epoch=str(re),
+                    claim_type=str(claim_type),
+                ).set(state[1])
+                messages.append(
+                    mb.build(
+                        MessageLevel.WARNING,
+                        (
+                            f"Unclaimed rewards in reward epoch {re},"
+                            f" claim type {claim_type}, amount {state[1]}"
+                        ),
+                    )
+                )
         return messages

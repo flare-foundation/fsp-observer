@@ -1,0 +1,59 @@
+{
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "voter",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint24",
+          "name": "rewardEpochId",
+          "type": "uint24"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "delegationAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint16",
+          "name": "delegationFeeBIPS",
+          "type": "uint16"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "wNatWeight",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "wNatCappedWeight",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes20[]",
+          "name": "nodeIds",
+          "type": "bytes20[]"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256[]",
+          "name": "nodeWeights",
+          "type": "uint256[]"
+        }
+      ],
+      "name": "VoterRegistrationInfo",
+      "type": "event"
+    }
+  ]
+}

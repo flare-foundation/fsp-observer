@@ -149,7 +149,9 @@ def get_config() -> Configuration:
     p_chain_rpc_url = rpc_base_url + "/ext/bc/P"
 
     rpc_api_key = os.environ.get("RPC_API_KEY")
-    rpc_headers = {"x-apikey": rpc_api_key} if rpc_api_key else {}
+    rpc_headers = {"Content-Type": "application/json"}
+    if rpc_api_key:
+        rpc_headers["x-apikey"] = rpc_api_key
 
     w = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"headers": rpc_headers}))
     if not w.is_connected():
