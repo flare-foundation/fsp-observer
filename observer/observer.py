@@ -182,42 +182,73 @@ def calculate_maximum_exponent(block_production: float, config: Configuration) -
     return max_exponent
 
 
+async def _find_block_near_timestamp(
+    w: AsyncWeb3,
+    current_block_id: int,
+    target_ts: int,
+    current_ts: int,
+) -> int:
+    """Find a block close to target_ts. Falls back to earliest available block."""
+    avg_block_time = 1  # ~1 block/sec on Flare
+    diff = current_ts - target_ts
+    block_id = current_block_id - int(diff / avg_block_time)
+
+    if block_id < 1:
+        block_id = 1
+
+    try:
+        block = await w.eth.get_block(block_id)
+    except Exception:
+        # Block not available (pruned node), search forward for earliest available
+        LOGGER.warning(
+            "Block %d not available, searching for earliest available block",
+            block_id,
+        )
+        low, high = block_id, current_block_id
+        while low < high:
+            mid = (low + high) // 2
+            try:
+                await w.eth.get_block(mid)
+                high = mid
+            except Exception:
+                low = mid + 1
+        block_id = low
+        block = await w.eth.get_block(block_id)
+
+    assert "timestamp" in block
+    d = block["timestamp"] - target_ts
+    while abs(d) > 600:
+        step = 100 * (d // abs(d))
+        next_id = block_id - step
+        try:
+            block = await w.eth.get_block(next_id)
+        except Exception:
+            break  # hit pruning boundary, use current block_id
+        assert "timestamp" in block
+        block_id = next_id
+        d = block["timestamp"] - target_ts
+
+    return block_id
+
+
 async def find_voter_registration_blocks(
     w: AsyncWeb3,
     current_block_id: int,
     reward_epoch: RewardEpoch,
 ) -> tuple[int, int]:
-    # there are roughly 3600 blocks in an hour
-    avg_block_time = 3600 / 3600
     current_ts = int(time.time())
 
-    # find timestamp that is more than 2h30min (=9000s) before start_of_epoch_ts
+    # find block that has timestamp approx. 2h30min before the reward epoch
     target_start_ts = reward_epoch.start_s - 9000
-    start_diff = current_ts - target_start_ts
+    start_block_id = await _find_block_near_timestamp(
+        w, current_block_id, target_start_ts, current_ts
+    )
 
-    start_block_id = current_block_id - int(start_diff / avg_block_time)
-    block = await w.eth.get_block(start_block_id)
-    assert "timestamp" in block
-    d = block["timestamp"] - target_start_ts
-    while abs(d) > 600:
-        start_block_id -= 100 * (d // abs(d))
-        block = await w.eth.get_block(start_block_id)
-        assert "timestamp" in block
-        d = block["timestamp"] - target_start_ts
-
-    # end timestamp is 1h (=3600s) before start_of_epoch_ts
+    # end timestamp is 1h before start_of_epoch_ts
     target_end_ts = reward_epoch.start_s - 3600
-    end_diff = current_ts - target_end_ts
-    end_block_id = current_block_id - int(end_diff / avg_block_time)
-
-    block = await w.eth.get_block(end_block_id)
-    assert "timestamp" in block
-    d = block["timestamp"] - target_end_ts
-    while abs(d) > 600:
-        end_block_id -= 100 * (d // abs(d))
-        block = await w.eth.get_block(end_block_id)
-        assert "timestamp" in block
-        d = block["timestamp"] - target_end_ts
+    end_block_id = await _find_block_near_timestamp(
+        w, current_block_id, target_end_ts, current_ts
+    )
 
     return (start_block_id, end_block_id)
 
