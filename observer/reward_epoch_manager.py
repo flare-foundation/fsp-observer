@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Sequence
 from typing import Self
 
@@ -5,6 +6,8 @@ from attrs import define, field, frozen
 from eth_typing import ChecksumAddress
 from py_flare_common.fsp.epoch.epoch import RewardEpoch
 from web3 import AsyncWeb3
+
+logger = logging.getLogger(__name__)
 
 from configuration.types import Configuration
 from observer import metrics
@@ -206,8 +209,24 @@ class SigningPolicyBuilder:
 
         for i, voter in enumerate(self.signing_policy_initialized.voters):
             weight = self.signing_policy_initialized.weights[i]
-            vre = vres[spa[voter]]
-            vrie = vries[spa[voter]]
+
+            voter_address = spa.get(voter)
+            if voter_address is None:
+                logger.warning(
+                    "Signing policy voter %s not found in voter registrations, skipping",
+                    voter,
+                )
+                continue
+
+            vre = vres.get(voter_address)
+            vrie = vries.get(voter_address)
+            if vre is None or vrie is None:
+                logger.warning(
+                    "Voter %s (signing policy address %s) missing registration data, skipping",
+                    voter_address,
+                    voter,
+                )
+                continue
 
             nodes = []
             for n, w in zip(vrie.node_ids, vrie.node_weights):
