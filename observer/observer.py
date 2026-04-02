@@ -343,7 +343,8 @@ async def get_signing_policy_events(
         builder.add(e)
 
         # signing policy initialized is the last event that gets emitted
-        if event.name == "SigningPolicyInitialized":
+        # only break if this was actually accepted (correct reward epoch)
+        if event.name == "SigningPolicyInitialized" and builder.signing_policy_initialized is not None:
             break
 
     return builder.build()
