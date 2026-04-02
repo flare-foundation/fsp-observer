@@ -1038,41 +1038,43 @@ async def observer_loop(config: Configuration) -> None:
             # prepare new data for anchor feeds
             if len(rounds) > 0:
                 medians.extend([round.ftso.medians for round in rounds])
-                for round in rounds:
-                    extracted_ftso = extract_round_for_entity(
-                        round.ftso, entity, round.voting_epoch
-                    ).submit_2.extracted
-                    if extracted_ftso is not None:
-                        votes = extracted_ftso.parsed_payload.payload.values
-                        entity_votes.append(votes)
+                if entity is not None:
+                    for round in rounds:
+                        extracted_ftso = extract_round_for_entity(
+                            round.ftso, entity, round.voting_epoch
+                        ).submit_2.extracted
+                        if extracted_ftso is not None:
+                            votes = extracted_ftso.parsed_payload.payload.values
+                            entity_votes.append(votes)
+                        else:
+                            entity_votes.append([])
+            if entity is not None:
+                for r in rounds:
+                    ftso_fin = "YES" if r.ftso.finalization else "NO"
+                    fdc_fin = "YES" if r.fdc.finalization else "NO"
+                    nb_medians = len(r.ftso.medians) if r.ftso.medians else 0
+                    validation_msgs = validate_round(r, signing_policy, entity, config)
+                    if validation_msgs:
+                        LOGGER.warning(
+                            f"Round {r.voting_epoch.id}:"
+                            f" {len(validation_msgs)} issue(s)"
+                            f" | FTSO={ftso_fin} FDC={fdc_fin}"
+                        )
                     else:
-                        entity_votes.append([])
-            for r in rounds:
-                ftso_fin = "YES" if r.ftso.finalization else "NO"
-                fdc_fin = "YES" if r.fdc.finalization else "NO"
-                nb_medians = len(r.ftso.medians) if r.ftso.medians else 0
-                validation_msgs = validate_round(r, signing_policy, entity, config)
-                if validation_msgs:
-                    LOGGER.warning(
-                        f"Round {r.voting_epoch.id}:"
-                        f" {len(validation_msgs)} issue(s)"
-                        f" | FTSO={ftso_fin} FDC={fdc_fin}"
+                        LOGGER.info(
+                            f"Round {r.voting_epoch.id}: OK"
+                            f" | FTSO={ftso_fin} FDC={fdc_fin}"
+                            f" medians={nb_medians}"
+                        )
+                    messages.extend(validation_msgs)
+                    _record_submit_metrics(
+                        "ftso", extract_round_for_entity(r.ftso, entity, r.voting_epoch)
                     )
-                else:
-                    LOGGER.info(
-                        f"Round {r.voting_epoch.id}: OK"
-                        f" | FTSO={ftso_fin} FDC={fdc_fin}"
-                        f" medians={nb_medians}"
+                    _record_submit_metrics(
+                        "fdc",
+                        extract_round_for_entity(r.fdc, entity, r.voting_epoch),
+                        include_submit1=False,
                     )
-                messages.extend(validation_msgs)
-                _record_submit_metrics(
-                    "ftso", extract_round_for_entity(r.ftso, entity, r.voting_epoch)
-                )
-                _record_submit_metrics(
-                    "fdc",
-                    extract_round_for_entity(r.fdc, entity, r.voting_epoch),
-                    include_submit1=False,
-                )
 
             # prepare new data for FDC participation
             signatures.extend([round.submitted_signatures for round in rounds])
