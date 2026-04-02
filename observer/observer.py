@@ -953,7 +953,7 @@ async def observer_loop(config: Configuration) -> None:
             entity = signing_policy.entity_mapper.by_identity_address.get(tia)
 
             # perform all minimal condition checks here
-            if int(time.time() - last_minimal_conditions_check) > 60:
+            if entity is not None and int(time.time() - last_minimal_conditions_check) > 60:
                 metrics.FAST_UPDATE_BLOCKS_SINCE_LAST.labels(
                     identity_address=metrics.identity_address
                 ).set(block - fum.last_update_block)
