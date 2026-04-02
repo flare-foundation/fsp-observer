@@ -558,9 +558,14 @@ async def observer_loop(config: Configuration) -> None:
     contracts = cm.get_contracts_list()
     event_signatures = cm.get_events()
 
-    entity = signing_policy.entity_mapper.by_identity_address[tia]
+    entity = signing_policy.entity_mapper.by_identity_address.get(tia)
+    if entity is None:
+        LOGGER.warning(
+            "Entity %s not in signing policy, using identity address as fallback signing policy address",
+            tia,
+        )
     fum = FastUpdatesManager(
-        block_number, FastUpdate(reward_epoch.id, entity.signing_policy_address, [])
+        block_number, FastUpdate(reward_epoch.id, entity.signing_policy_address if entity else tia, [])
     )
     spm = SigningPolicyManager(signing_policy, signing_policy)
     rm = RewardManager()
@@ -670,10 +675,11 @@ async def observer_loop(config: Configuration) -> None:
 
                 minimal_conditions.reward_epoch_id = signing_policy.reward_epoch.id
 
-                entity = signing_policy.entity_mapper.by_identity_address[tia]
-                unclaimed_rewards = await rm.get_unclaimed_rewards(entity, config, w)
-                for m in unclaimed_rewards:
-                    log_message(config, m)
+                entity = signing_policy.entity_mapper.by_identity_address.get(tia)
+                if entity is not None:
+                    unclaimed_rewards = await rm.get_unclaimed_rewards(entity, config, w)
+                    for m in unclaimed_rewards:
+                        log_message(config, m)
 
             block_logs = await w.eth.get_logs(
                 {
@@ -731,17 +737,15 @@ async def observer_loop(config: Configuration) -> None:
 
                             # this had to be sent to Relay
                             # so we can check if the Relay address changed
-                            entity = signing_policy.entity_mapper.by_identity_address[
-                                tia
-                            ]
-                            tx = await w.eth.get_transaction(data["transactionHash"])
-                            assert "to" in tx
-                            assert "from" in tx
-                            if tx["from"] == entity.identity_address:
-                                relay_address = tx["to"]
-                                event_messages.extend(
-                                    cm.check_relay_address(relay_address)
-                                )
+                            if entity is not None:
+                                tx = await w.eth.get_transaction(data["transactionHash"])
+                                assert "to" in tx
+                                assert "from" in tx
+                                if tx["from"] == entity.identity_address:
+                                    relay_address = tx["to"]
+                                    event_messages.extend(
+                                        cm.check_relay_address(relay_address)
+                                    )
 
                         case "AttestationRequest":
                             e = AttestationRequest.from_dict(data, voting_epoch)
@@ -761,11 +765,11 @@ async def observer_loop(config: Configuration) -> None:
                             spb.add(e)
                             if registered:
                                 continue
-                            entity = signing_policy.entity_mapper.by_identity_address[
+                            _entity = signing_policy.entity_mapper.by_identity_address.get(
                                 tia
-                            ]
-                            if (
-                                entity.signing_policy_address
+                            )
+                            if _entity is not None and (
+                                _entity.signing_policy_address
                                 == e.signing_policy_address
                             ):
                                 registered = True
@@ -804,10 +808,7 @@ async def observer_loop(config: Configuration) -> None:
                             spa, address, update_array = calculate_update_from_tx(
                                 config, w, tx
                             )
-                            entity = signing_policy.entity_mapper.by_identity_address[
-                                tia
-                            ]
-                            if un_prefix_0x(entity.signing_policy_address) == spa:
+                            if entity is not None and un_prefix_0x(entity.signing_policy_address) == spa:
                                 fum.last_update = FastUpdate(
                                     signing_policy.reward_epoch.id,
                                     address,
@@ -834,9 +835,6 @@ async def observer_loop(config: Configuration) -> None:
                             )
                         case "VoterPreRegistered":
                             e = VoterPreRegistered.from_dict(data)
-                            entity = signing_policy.entity_mapper.by_identity_address[
-                                tia
-                            ]
                             if tia == e.voter:
                                 registered = True
                                 metrics.REGISTERED_NEXT_EPOCH.labels(
@@ -853,11 +851,11 @@ async def observer_loop(config: Configuration) -> None:
                 entity = signing_policy.entity_mapper.by_omni.get(sender_address)
                 if entity is None:
                     continue
-                target_entity = signing_policy.entity_mapper.by_identity_address[tia]
+                target_entity = signing_policy.entity_mapper.by_identity_address.get(tia)
 
                 if called_function_sig in target_function_signatures:
                     # check if the Submission address is correct
-                    if entity == target_entity:
+                    if target_entity is not None and entity == target_entity:
                         tx_messages.extend(cm.check_submission_address(wtx.to_address))
                     mode = target_function_signatures[called_function_sig]
                     match mode:
@@ -952,7 +950,7 @@ async def observer_loop(config: Configuration) -> None:
             messages.clear()
             messages.extend(tx_messages)
             messages.extend(event_messages)
-            entity = signing_policy.entity_mapper.by_identity_address[tia]
+            entity = signing_policy.entity_mapper.by_identity_address.get(tia)
 
             # perform all minimal condition checks here
             if int(time.time() - last_minimal_conditions_check) > 60:
@@ -991,7 +989,7 @@ async def observer_loop(config: Configuration) -> None:
 
             node_ids = [
                 node_id_to_representation(node.node_id) for node in entity.nodes
-            ]
+            ] if entity else []
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -1031,10 +1029,9 @@ async def observer_loop(config: Configuration) -> None:
 
             if int(time.time()) - cron_time > 60 * 60:
                 cron_time = int(time.time())
-                check_functions = [
-                    entity.check_addresses(config, w),
-                    fum.check_addresses(config, w),
-                ]
+                check_functions = [fum.check_addresses(config, w)]
+                if entity is not None:
+                    check_functions.insert(0, entity.check_addresses(config, w))
                 messages.extend(await cron(check_functions))
 
             rounds = vrm.finalize(block_data)
