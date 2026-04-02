@@ -238,14 +238,15 @@ async def find_voter_registration_blocks(
 ) -> tuple[int, int]:
     current_ts = int(time.time())
 
-    # find block that has timestamp approx. 2h30min before the reward epoch
-    target_start_ts = reward_epoch.start_s - 9000
+    # voter registration period: scan from 12h before epoch start to epoch start
+    # original window (2h30min..1h before) was too narrow for some networks
+    target_start_ts = reward_epoch.start_s - 43200  # 12h before
     start_block_id = await _find_block_near_timestamp(
         w, current_block_id, target_start_ts, current_ts
     )
 
-    # end timestamp is 1h before start_of_epoch_ts
-    target_end_ts = reward_epoch.start_s - 3600
+    # end at epoch start (not 1h before, to catch late registrations)
+    target_end_ts = reward_epoch.start_s
     end_block_id = await _find_block_near_timestamp(
         w, current_block_id, target_end_ts, current_ts
     )
