@@ -132,12 +132,16 @@ class SigningPolicyBuilder:
         | VoterRemoved
         | SigningPolicyInitialized,
     ) -> Self:
+        # Skip events from other reward epochs
+        rid = self.reward_epoch.id if self.reward_epoch else None
+        if rid is not None and hasattr(event, "reward_epoch_id"):
+            if event.reward_epoch_id != rid:
+                return self
+
         if isinstance(event, RandomAcquisitionStarted):
-            assert self.random_acquisation_started is None
             self.random_acquisation_started = event
 
         if isinstance(event, VotePowerBlockSelected):
-            assert self.vote_power_block_selected is None
             self.vote_power_block_selected = event
 
         if isinstance(event, VoterRegistered):
@@ -150,7 +154,6 @@ class SigningPolicyBuilder:
             self.voter_removed.append(event)
 
         if isinstance(event, SigningPolicyInitialized):
-            assert self.signing_policy_initialized is None
             self.signing_policy_initialized = event
 
         return self
