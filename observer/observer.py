@@ -420,6 +420,9 @@ async def observer_loop(config: Configuration) -> None:
     )
 
     # get informations for events that build the current signing policy
+    LOGGER.info(
+        f"Scanning blocks {lower_block_id}..{end_block_id} for signing policy events"
+    )
     signing_policy = await get_signing_policy_events(
         w,
         config,
