@@ -166,7 +166,7 @@ async def get_block_production(w: AsyncWeb3) -> float:
     latest_block = await w.eth.get_block("latest")
     assert "timestamp" in latest_block
     assert "number" in latest_block
-    to_compare = min(1_000_000, int(latest_block["number"]) - 1)
+    to_compare = min(10_000, int(latest_block["number"]) - 1)
     comparison_block = await w.eth.get_block(int(latest_block["number"]) - to_compare)
     assert "timestamp" in comparison_block
     time_delta = latest_block["timestamp"] - comparison_block["timestamp"]
