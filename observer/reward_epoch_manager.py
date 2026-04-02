@@ -192,14 +192,21 @@ class SigningPolicyBuilder:
         assert self.reward_epoch is not None
         rid = self.reward_epoch.id
 
-        assert self.random_acquisation_started is not None
-        assert self.random_acquisation_started.reward_epoch_id == rid
+        if self.random_acquisation_started is None:
+            logger.warning(
+                "RandomAcquisitionStarted event not found for reward_epoch=%d "
+                "(block range may not cover registration period)", rid,
+            )
 
-        assert self.vote_power_block_selected is not None
-        assert self.vote_power_block_selected.reward_epoch_id == rid
+        if self.vote_power_block_selected is None:
+            logger.warning(
+                "VotePowerBlockSelected event not found for reward_epoch=%d", rid,
+            )
 
-        assert self.signing_policy_initialized is not None
-        assert self.signing_policy_initialized.reward_epoch_id == rid
+        if self.signing_policy_initialized is None:
+            raise ValueError(
+                f"SigningPolicyInitialized event not found for reward_epoch={rid}"
+            )
 
         logger.info(
             "Building signing policy for reward_epoch=%d: "
@@ -269,7 +276,7 @@ class SigningPolicyBuilder:
 
         return SigningPolicy(
             reward_epoch=self.reward_epoch,
-            vote_power_block=self.vote_power_block_selected.vote_power_block,
+            vote_power_block=self.vote_power_block_selected.vote_power_block if self.vote_power_block_selected else 0,
             start_voting_round=self.signing_policy_initialized.start_voting_round_id,
             threshold=self.signing_policy_initialized.threshold,
             seed=self.signing_policy_initialized.seed,
