@@ -198,11 +198,25 @@ class SigningPolicyBuilder:
         assert self.signing_policy_initialized is not None
         assert self.signing_policy_initialized.reward_epoch_id == rid
 
-        assert len(self.voter_registered) == len(self.voter_registration_info)
+        logger.info(
+            "Building signing policy for reward_epoch=%d: "
+            "voter_registered=%d, voter_registration_info=%d, "
+            "voter_removed=%d, signing_policy_voters=%d",
+            rid,
+            len(self.voter_registered),
+            len(self.voter_registration_info),
+            len(self.voter_removed),
+            len(self.signing_policy_initialized.voters),
+        )
 
-        spa = {v.signing_policy_address: v.voter for v in self.voter_registered}
-        vres = {v.voter: v for v in self.voter_registered}
-        vries = {v.voter: v for v in self.voter_registration_info}
+        # Filter out removed voters
+        removed_voters = {v.voter for v in self.voter_removed}
+        active_registered = [v for v in self.voter_registered if v.voter not in removed_voters]
+        active_reg_info = [v for v in self.voter_registration_info if v.voter not in removed_voters]
+
+        spa = {v.signing_policy_address: v.voter for v in active_registered}
+        vres = {v.voter: v for v in active_registered}
+        vries = {v.voter: v for v in active_reg_info}
 
         entities: list[Entity] = []
         mapper = EntityMapper()
