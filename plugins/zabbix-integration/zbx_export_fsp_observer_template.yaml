@@ -1,0 +1,682 @@
+zabbix_export:
+  version: '6.2'
+  date: '2026-04-03T23:33:41Z'
+  template_groups:
+    -
+      uuid: 784a65b733ee4f7fba6e6e77cd4cff25
+      name: 'Templates Flare FSP Observer'
+  templates:
+    -
+      uuid: 5e101362bf654be186ddb7e382ec492d
+      template: 'FSP Observer by Zabbix Agent'
+      name: 'FSP Observer by Zabbix Agent'
+      description: 'Contains the main items and triggers to monitor the FSP Observer.'
+      groups:
+        -
+          name: 'Templates Flare FSP Observer'
+      items:
+        -
+          uuid: 5b84433053074bd398b9143c597cadeb
+          name: flare_fsp_address_balance_wei_fast_updates_1
+          key: 'fspobs.get["flare_fsp_address_balance_wei_fast_updates_1",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_address_balance_wei_fast_updates_1
+          triggers:
+            -
+              uuid: 707d7e2335f34f70bbb517068579d039
+              expression: 'last(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_address_balance_wei_fast_updates_1",{$HOST.NAME},{$HOST.PORT}])<1.25E+20'
+              name: 'Fast updates 1 account has a low balance on {HOST.NAME}'
+              priority: WARNING
+              description: 'Checks if the fast updates 1 account balance has at least 125 FLR/SGB.'
+              manual_close: 'YES'
+        -
+          uuid: 78ff59698f2948aba0b09a17c0dd013a
+          name: flare_fsp_address_balance_wei_fast_updates_2
+          key: 'fspobs.get["flare_fsp_address_balance_wei_fast_updates_2",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_address_balance_wei_fast_updates_2
+          triggers:
+            -
+              uuid: 340cb837497d493cb321dd2cb79ec44e
+              expression: 'last(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_address_balance_wei_fast_updates_2",{$HOST.NAME},{$HOST.PORT}])<1.25E+20'
+              name: 'Fast updates 2 account has a low balance on {HOST.NAME}'
+              priority: WARNING
+              description: 'Checks if the fast updates 2 account balance has at least 125 FLR/SGB.'
+              manual_close: 'YES'
+        -
+          uuid: 6f33f18e5491463286acdc481a957124
+          name: flare_fsp_address_balance_wei_fast_updates_3
+          key: 'fspobs.get["flare_fsp_address_balance_wei_fast_updates_3",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_address_balance_wei_fast_updates_3
+          triggers:
+            -
+              uuid: 0962b739870a49dc83d2ef1cdb3ac7b0
+              expression: 'last(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_address_balance_wei_fast_updates_3",{$HOST.NAME},{$HOST.PORT}])<1.25E+20'
+              name: 'Fast updates 3 account has a low balance on {HOST.NAME}'
+              priority: WARNING
+              description: 'Checks if the fast updates 3 account balance has at least 125 FLR/SGB.'
+              manual_close: 'YES'
+        -
+          uuid: c8afc449d8db425197bc7ec10bda3248
+          name: flare_fsp_address_balance_wei_policy
+          key: 'fspobs.get["flare_fsp_address_balance_wei_policy",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_address_balance_wei_policy
+          triggers:
+            -
+              uuid: 99ece058cebb4bb89bbe4af40a151f15
+              expression: 'last(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_address_balance_wei_policy",{$HOST.NAME},{$HOST.PORT}])<1.25E+20'
+              name: 'Policy account has a low balance on {HOST.NAME}'
+              priority: WARNING
+              description: 'Checks if the policy account balance has at least 125 FLR/SGB.'
+              manual_close: 'YES'
+        -
+          uuid: 697922e190504405b70fb5c8fa6c838c
+          name: flare_fsp_address_balance_wei_signatures
+          key: 'fspobs.get["flare_fsp_address_balance_wei_signatures",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_address_balance_wei_signatures
+          triggers:
+            -
+              uuid: 0e4b0060bd59494a95bc0366586f5691
+              expression: 'last(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_address_balance_wei_signatures",{$HOST.NAME},{$HOST.PORT}])<1.25E+20'
+              name: 'Signatures account has a low balance on {HOST.NAME}'
+              priority: WARNING
+              description: 'Checks if the signatures account balance has at least 125 FLR/SGB.'
+              manual_close: 'YES'
+        -
+          uuid: 6fa948367d714b5a8fcd18e420bfa08e
+          name: flare_fsp_address_balance_wei_submit
+          key: 'fspobs.get["flare_fsp_address_balance_wei_submit",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_address_balance_wei_submit
+          triggers:
+            -
+              uuid: afa265df680f4d0589ebf17ecadb3418
+              expression: 'last(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_address_balance_wei_submit",{$HOST.NAME},{$HOST.PORT}])<1.25E+20'
+              name: 'Submission account has a low balance on {HOST.NAME}'
+              priority: WARNING
+              description: 'Checks if the submission account balance has at least 125 FLR/SGB.'
+              manual_close: 'YES'
+        -
+          uuid: 78420f9d0491480abdee96efc6f6b104
+          name: flare_fsp_contract_address_wrong_total_relay
+          key: 'fspobs.get["flare_fsp_contract_address_wrong_total_relay",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_contract_address_wrong_total_relay
+          triggers:
+            -
+              uuid: eabe548c3ce441a5a094d7f2cfb543b1
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_contract_address_wrong_total_relay",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'Contract address wrong total relay'
+              priority: AVERAGE
+        -
+          uuid: 89aa3f2a0d5c432593774b81eb0fc0b9
+          name: flare_fsp_contract_address_wrong_total_submission
+          key: 'fspobs.get["flare_fsp_contract_address_wrong_total_submission",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_contract_address_wrong_total_submission
+          triggers:
+            -
+              uuid: d4b92fcd05cc4bc8996ad375c851b514
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_contract_address_wrong_total_submission",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'Contract address wrong total submission'
+              priority: AVERAGE
+        -
+          uuid: 95a4e578873f467ba4c288b3ed433755
+          name: flare_fsp_fast_update_blocks_since_last
+          key: 'fspobs.get["flare_fsp_fast_update_blocks_since_last",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_fast_update_blocks_since_last
+        -
+          uuid: 160808d5b75e42058be1fb7b8c773216
+          name: flare_fsp_fdc_participation_rate_bips
+          key: 'fspobs.get["flare_fsp_fdc_participation_rate_bips",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_fdc_participation_rate_bips
+        -
+          uuid: c7ce50ed20394ca0be1a0b2e9cb79bf7
+          name: flare_fsp_ftso_anchor_feeds_success_rate_bips
+          key: 'fspobs.get["flare_fsp_ftso_anchor_feeds_success_rate_bips",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_ftso_anchor_feeds_success_rate_bips
+        -
+          uuid: 17aa1574746146deb0edb7cc75824350
+          name: flare_fsp_node_uptime_ratio
+          key: 'fspobs.get["flare_fsp_node_uptime_ratio",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_node_uptime_ratio
+          triggers:
+            -
+              uuid: 1fb3eb95927d4fb598feb46cf9c3bcf6
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_node_uptime_ratio",{$HOST.NAME},{$HOST.PORT}])<>0'
+              name: 'FSP node uptime ratio'
+              priority: HIGH
+        -
+          uuid: b5c3bb6bcef440da9ba18455dc3edc1b
+          name: flare_fsp_registered_current_epoch
+          key: 'fspobs.get["flare_fsp_registered_current_epoch",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_registered_current_epoch
+        -
+          uuid: 7796f4312dee49d788024a080dcdc81e
+          name: flare_fsp_registered_next_epoch
+          key: 'fspobs.get["flare_fsp_registered_next_epoch",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_registered_next_epoch
+          triggers:
+            -
+              uuid: 4d6a941068644a75896b1bb54d5cdb2a
+              expression: 'last(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_registered_next_epoch",{$HOST.NAME},{$HOST.PORT}])<>1'
+              name: 'FSP registered next epoch'
+              priority: HIGH
+        -
+          uuid: 4463f0a28a1a48799d30334e05f23b7e
+          name: flare_fsp_reveal_offence_total_fdc
+          key: 'fspobs.get["flare_fsp_reveal_offence_total_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_reveal_offence_total_fdc
+          triggers:
+            -
+              uuid: 61a9bf0c901e4701a2d9d8e2b64203b7
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_reveal_offence_total_fdc",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP reveal offence total fdc'
+              priority: HIGH
+        -
+          uuid: 1abcc6367b5d4aa1970dd32dfa61a6fb
+          name: flare_fsp_reveal_offence_total_ftso
+          key: 'fspobs.get["flare_fsp_reveal_offence_total_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_reveal_offence_total_ftso
+          triggers:
+            -
+              uuid: 831885888d124905b47c73f01df92478
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_reveal_offence_total_ftso",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP reveal offence total ftso'
+              priority: HIGH
+        -
+          uuid: 80a0a1d76b9c44f88118762806cc63ed
+          name: flare_fsp_reward_epoch
+          key: 'fspobs.get["flare_fsp_reward_epoch",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_reward_epoch
+        -
+          uuid: 8af91fd4a9954579a26f138693f83cb6
+          name: flare_fsp_signature_grace_period_missed_total_fdc
+          key: 'fspobs.get["flare_fsp_signature_grace_period_missed_total_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_signature_grace_period_missed_total_fdc
+          triggers:
+            -
+              uuid: 35dadf98165c4262b2296a791ca4dded
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_signature_grace_period_missed_total_fdc",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP signature grace period missed total fdc'
+              priority: AVERAGE
+        -
+          uuid: a39bd57914fa42439cc1240e2ca533b9
+          name: flare_fsp_signature_grace_period_missed_total_ftso
+          key: 'fspobs.get["flare_fsp_signature_grace_period_missed_total_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_signature_grace_period_missed_total_ftso
+          triggers:
+            -
+              uuid: 072b04c9421c4579bd028cca437fd95b
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_signature_grace_period_missed_total_ftso",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP signature grace period missed total ftso'
+              priority: AVERAGE
+        -
+          uuid: 2998069e8f314f36a7104472621315fd
+          name: flare_fsp_signature_mismatch_total_fdc
+          key: 'fspobs.get["flare_fsp_signature_mismatch_total_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_signature_mismatch_total_fdc
+          triggers:
+            -
+              uuid: fb412b5fd17e42e8b1c99acaf1df6910
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_signature_mismatch_total_fdc",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP signature mismatch total fdc'
+              priority: AVERAGE
+        -
+          uuid: 66dd2a73d7e7447cbc9f99d0bf2872d6
+          name: flare_fsp_signature_mismatch_total_ftso
+          key: 'fspobs.get["flare_fsp_signature_mismatch_total_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_signature_mismatch_total_ftso
+          triggers:
+            -
+              uuid: bffaa1a1027448ed96be03d56848d1ba
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_signature_mismatch_total_ftso",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP signature mismatch total ftso'
+              priority: AVERAGE
+        -
+          uuid: f4913996b99d478f8fef1d309a713643
+          name: flare_fsp_submit_early_total_signatures_fdc
+          key: 'fspobs.get["flare_fsp_submit_early_total_signatures_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_early_total_signatures_fdc
+          triggers:
+            -
+              uuid: f5fb5524582a408c85b5e01fad7267d1
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_early_total_signatures_fdc",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit early total signatures fdc'
+              priority: AVERAGE
+        -
+          uuid: a27d3df656c249ba91c92c2e0b64edec
+          name: flare_fsp_submit_early_total_signatures_ftso
+          key: 'fspobs.get["flare_fsp_submit_early_total_signatures_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_early_total_signatures_ftso
+          triggers:
+            -
+              uuid: b295ddfb0b554e6099f3eb6752d025a4
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_early_total_signatures_ftso",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit early total signatures ftso'
+              priority: AVERAGE
+        -
+          uuid: d3dc2d2eb5814169a503b03d17922b96
+          name: flare_fsp_submit_early_total_submit1
+          key: 'fspobs.get["flare_fsp_submit_early_total_submit1",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_early_total_submit1
+          triggers:
+            -
+              uuid: b5300ec965524d02a1a7eb3de32ea32e
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_early_total_submit1",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit early total submit1'
+              priority: AVERAGE
+        -
+          uuid: f501ef21f316496a9c6c87d82a677149
+          name: flare_fsp_submit_early_total_submit2_fdc
+          key: 'fspobs.get["flare_fsp_submit_early_total_submit2_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_early_total_submit2_fdc
+          triggers:
+            -
+              uuid: 620fe9a1db634f1da49e3b525ca5f594
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_early_total_submit2_fdc",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit early total submit2 fdc'
+              priority: AVERAGE
+        -
+          uuid: f4e59e2af0bc4e418a597350b2a9ea44
+          name: flare_fsp_submit_early_total_submit2_ftso
+          key: 'fspobs.get["flare_fsp_submit_early_total_submit2_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_early_total_submit2_ftso
+          triggers:
+            -
+              uuid: 7f2c797c640044c7a0bd1b46fdea7ea3
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_early_total_submit2_ftso",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit early total submit2 ftso'
+              priority: AVERAGE
+        -
+          uuid: e391b980d9c34ae789ad3dc487c6fc58
+          name: flare_fsp_submit_late_total_signatures_fdc
+          key: 'fspobs.get["flare_fsp_submit_late_total_signatures_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_late_total_signatures_fdc
+          triggers:
+            -
+              uuid: 8710d1ba6d4c49a38bc658502333c693
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_late_total_signatures_fdc",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit late total signatures fdc'
+              priority: AVERAGE
+        -
+          uuid: f17bd96326394201974416ba8cdd1385
+          name: flare_fsp_submit_late_total_signatures_ftso
+          key: 'fspobs.get["flare_fsp_submit_late_total_signatures_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_late_total_signatures_ftso
+          triggers:
+            -
+              uuid: 301d005afde54e8090edc2e0eb78e3c8
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_late_total_signatures_ftso",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit late total signatures ftso'
+              priority: AVERAGE
+        -
+          uuid: 4a8a6c876c0546f19358c3cb0b2d1168
+          name: flare_fsp_submit_late_total_submit1
+          key: 'fspobs.get["flare_fsp_submit_late_total_submit1",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_late_total_submit1
+          triggers:
+            -
+              uuid: e7da0e12df4440bda32bafed8e931c4c
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_late_total_submit1",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit late total submit1'
+              priority: AVERAGE
+        -
+          uuid: fc777b29967649d68cd6a027bc98b458
+          name: flare_fsp_submit_late_total_submit2_fdc
+          key: 'fspobs.get["flare_fsp_submit_late_total_submit2_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_late_total_submit2_fdc
+          triggers:
+            -
+              uuid: 891151d87aba4309bd742036d4836dfa
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_late_total_submit2_fdc",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit late total submit2 fdc'
+              priority: AVERAGE
+        -
+          uuid: 6ebfb7df39164b3d8aba904c55dabb15
+          name: flare_fsp_submit_late_total_submit2_ftso
+          key: 'fspobs.get["flare_fsp_submit_late_total_submit2_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_late_total_submit2_ftso
+          triggers:
+            -
+              uuid: 405053e5a60a4e7cace01ce7361b6984
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_late_total_submit2_ftso",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit late total submit2 ftso'
+              priority: AVERAGE
+        -
+          uuid: ddc5650e489d467a87cd02b93fa79edb
+          name: flare_fsp_submit_missing_total_signatures_fdc
+          key: 'fspobs.get["flare_fsp_submit_missing_total_signatures_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_missing_total_signatures_fdc
+          triggers:
+            -
+              uuid: 5d09b68339154f4cac1a38c86a750648
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_missing_total_signatures_fdc",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit missing total signatures fdc'
+              priority: HIGH
+        -
+          uuid: 78d7e905f1c74a3a8da35112385e2a41
+          name: flare_fsp_submit_missing_total_signatures_ftso
+          key: 'fspobs.get["flare_fsp_submit_missing_total_signatures_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_missing_total_signatures_ftso
+          triggers:
+            -
+              uuid: 5f4aac66639e48f8a41fd5773b68aa72
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_missing_total_signatures_ftso",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit missing total signatures ftso'
+              priority: HIGH
+        -
+          uuid: 6e58673543564446a588a343a2ce2ac1
+          name: flare_fsp_submit_missing_total_submit1
+          key: 'fspobs.get["flare_fsp_submit_missing_total_submit1",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_missing_total_submit1
+          triggers:
+            -
+              uuid: d47af5f9ddaa4369af1697261516f04d
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_missing_total_submit1",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit missing total submit1'
+              priority: HIGH
+        -
+          uuid: d3d9c0fa0f7941a396fc30dde6f5de0d
+          name: flare_fsp_submit_missing_total_submit2_fdc
+          key: 'fspobs.get["flare_fsp_submit_missing_total_submit2_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_missing_total_submit2_fdc
+          triggers:
+            -
+              uuid: 92420bcf370a451d825205bd45219c3a
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_missing_total_submit2_fdc",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit missing total submit2 fdc'
+              priority: HIGH
+        -
+          uuid: 6144df24815a4d5c89ebe4879da259f5
+          name: flare_fsp_submit_missing_total_submit2_ftso
+          key: 'fspobs.get["flare_fsp_submit_missing_total_submit2_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_missing_total_submit2_ftso
+          triggers:
+            -
+              uuid: bc085d642eb6419f9fcdf1ef50a865f7
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_missing_total_submit2_ftso",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP missing early total submit2 ftso'
+              priority: HIGH
+            -
+              uuid: 2e5e3e0492b54f718e5097b6979b9a51
+              expression: 'change(/FSP Observer by Zabbix Agent/fspobs.get["flare_fsp_submit_missing_total_submit2_ftso",{$HOST.NAME},{$HOST.PORT}])>=1'
+              name: 'FSP submit missing total submit2 ftso'
+              priority: HIGH
+        -
+          uuid: d6ef4c6f539348caa9cf581a6b8edf38
+          name: flare_fsp_submit_ok_total_signatures_fdc
+          key: 'fspobs.get["flare_fsp_submit_ok_total_signatures_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_ok_total_signatures_fdc
+        -
+          uuid: 7651937e278641a89ebabf14014f3edb
+          name: flare_fsp_submit_ok_total_signatures_ftso
+          key: 'fspobs.get["flare_fsp_submit_ok_total_signatures_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_ok_total_signatures_ftso
+        -
+          uuid: c0254d4147b54aff9f7dc7c36689e31d
+          name: flare_fsp_submit_ok_total_submit1
+          key: 'fspobs.get["flare_fsp_submit_ok_total_submit1",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_ok_total_submit1
+        -
+          uuid: f1272c0cba7a4bfbad3a1724c26d85a4
+          name: flare_fsp_submit_ok_total_submit2_fdc
+          key: 'fspobs.get["flare_fsp_submit_ok_total_submit2_fdc",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_ok_total_submit2_fdc
+        -
+          uuid: 8dbdfc30822b4d4fb0a89afd53889ef7
+          name: flare_fsp_submit_ok_total_submit2_ftso
+          key: 'fspobs.get["flare_fsp_submit_ok_total_submit2_ftso",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_submit_ok_total_submit2_ftso
+        -
+          uuid: 9b19737a813540ed94f7a467b33f939c
+          name: flare_fsp_voting_round
+          key: 'fspobs.get["flare_fsp_voting_round",{$HOST.NAME},{$HOST.PORT}]'
+          delay: 5m
+          value_type: FLOAT
+          preprocessing:
+            -
+              type: JSONPATH
+              parameters:
+                - $.flare_fsp_voting_round
