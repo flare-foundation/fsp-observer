@@ -163,6 +163,13 @@ def get_config() -> Configuration:
     _fee_threshold = os.environ.get("FEE_THRESHOLD", "25")
     fee_threshold = int(_fee_threshold)
 
+    _block_production_lookback = os.environ.get("BLOCK_PRODUCTION_LOOKBACK", "1000000")
+    block_production_lookback = int(_block_production_lookback)
+    if block_production_lookback < 1:
+        raise ConfigError(
+            f"BLOCK_PRODUCTION_LOOKBACK must be >= 1 ({block_production_lookback=})"
+        )
+
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 
     config = Configuration(
@@ -174,6 +181,7 @@ def get_config() -> Configuration:
         epoch=get_epoch(chain_id),
         notification=get_notification_config(),
         fee_threshold=fee_threshold,
+        block_production_lookback=block_production_lookback,
         metrics=get_metrics_config(),
         log_level=log_level,
     )
