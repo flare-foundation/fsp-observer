@@ -41,6 +41,9 @@ def check_submit_1(
 
     if submit_1 is not None or extracted_round.submit_1.late:
         issues.append(mb.build(MessageLevel.ERROR, "found submit1 transaction"))
+        metrics.FDC_SUBMIT1_UNEXPECTED.labels(
+            identity_address=metrics.identity_address
+        ).inc()
 
     return issues
 
@@ -124,6 +127,9 @@ def check_submit_2(
                     "submit2 bit vote length didn't match number of requests in round",
                 )
             )
+            metrics.FDC_SUBMIT2_BIT_VOTE_LENGTH_MISMATCH.labels(
+                identity_address=metrics.identity_address
+            ).inc()
         else:
             for i, (r, bit, cbit) in enumerate(
                 zip(sorted_requests, bit_vector, consensus_bitvote)
@@ -140,6 +146,11 @@ def check_submit_2(
                             f"{at.representation}/{si.representation} at index {idx}",
                         )
                     )
+                    metrics.FDC_SUBMIT2_CONSENSUS_MISS.labels(
+                        identity_address=metrics.identity_address,
+                        attestation_type=at.representation,
+                        source_id=si.representation,
+                    ).inc()
 
         if early or late:
             issues.append(mb.build(level, message))
