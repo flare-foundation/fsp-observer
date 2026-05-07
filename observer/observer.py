@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import os
 import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Sequence
@@ -28,6 +29,7 @@ from web3._utils.events import get_event_data
 from web3.middleware import ExtraDataToPOAMiddleware
 from web3.types import TxData
 
+from configuration.config import Protocol
 from configuration.types import (
     Configuration,
     un_prefix_0x,
@@ -317,12 +319,35 @@ async def get_signing_policy_events(
     return builder.build()
 
 
+# FlareWatch S40 (2026-05-07): Operator-deferral-aware notification filter.
+# Reads FLAREWATCH_PROTOCOLS_ACTIVE from env (comma-separated lowercase
+# protocol names matching Protocol.id_to_name() output: "ftso", "fdc",
+# "fast updates", "staking"). Messages tagged with a protocol NOT in the
+# whitelist get logged locally but are NOT dispatched to notification
+# channels. Default (env unset or empty): all protocols active = original
+# upstream behavior. Untagged messages (e.g. observer crashes) always
+# dispatch — only protocol-tagged operational alerts are filterable.
+def _flarewatch_should_dispatch(message: Message) -> bool:
+    raw = os.environ.get("FLAREWATCH_PROTOCOLS_ACTIVE", "").strip()
+    if not raw:
+        return True
+    if message.protocol is None:
+        return True
+    active = {p.strip().lower() for p in raw.split(",") if p.strip()}
+    protocol_name = Protocol.id_to_name(message.protocol)
+    return protocol_name in active
+
+
 def log_message(config: Configuration, message: Message):
     LOGGER.log(message.level.value, message.message)
 
     n = config.notification
     # TODO:(@janezicmatej) this should be done eariler in the message lifecycle
     message.network = config.chain_id
+
+    # FlareWatch S40: gate notifications by FLAREWATCH_PROTOCOLS_ACTIVE
+    if not _flarewatch_should_dispatch(message):
+        return
 
     notify_discord(n.discord, message)
     notify_discord_embed(n.discord_embed, message)
