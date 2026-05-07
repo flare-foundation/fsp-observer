@@ -133,6 +133,17 @@ class MinimalConditions:
         if probability_ppb <= 100:
             level = MessageLevel.CRITICAL
 
+        # FlareWatch patch (S40, 2026-05-07): suppress WARNING-level noise for
+        # small-share validators where high probability_ppb is expected statistical
+        # luck, not a real anomaly. CRITICAL still fires unconditionally.
+        # Threshold: 5% (50_000_000 ppb). Rationale: at our 5/65505 normalized
+        # weight on Songbird epoch 396, P(no submission in max_exponent blocks)
+        # is ~79%, which is mathematically correct but operationally noise.
+        # Whales (weight/total >= 0.01) drop probability_ppb below threshold
+        # within ~max_exponent/2 blocks, preserving alert sensitivity for them.
+        if level == MessageLevel.WARNING and probability_ppb > 50_000_000:
+            return messages
+
         messages.append(
             mb.build(
                 level,
