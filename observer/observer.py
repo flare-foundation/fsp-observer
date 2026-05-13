@@ -338,7 +338,52 @@ def _flarewatch_should_dispatch(message: Message) -> bool:
     return protocol_name in active
 
 
+# FlareWatch 2026-05-13: TTL-based dedup cache for log_message dispatch.
+# The observer's outer loop occasionally double-dispatches the same alert
+# (same level/network/round/protocol/headline) from multiple call sites —
+# validation_msgs + event_messages + tx_messages can converge on overlapping
+# content during catch-up. This in-memory cache squashes the duplicate
+# without affecting alerts for distinct rounds or distinct content.
+#
+# Key: (level, network, round_id, protocol_id, headline_120). round_id is
+# IN the key, so different rounds DO fire separate alerts (a 5-round
+# streak still produces 5 alerts — desired). TTL is short (300s) so
+# transient state doesn't persist across long observer pauses.
+_LOG_MESSAGE_DEDUP_CACHE: dict[tuple, float] = {}
+_LOG_MESSAGE_DEDUP_TTL_SECONDS = 300
+
+
+def _log_message_dedup_key(message: Message) -> tuple:
+    return (
+        message.level,
+        message.network,
+        message.round.id if message.round is not None else None,
+        message.protocol,
+        # Headline only (first line, capped) — the body content can shift
+        # across catch-up scans even when alert semantics are the same.
+        (message.message.split("\n", 1)[0] if message.message else "")[:120],
+    )
+
+
+def _log_message_should_dedup(message: Message) -> bool:
+    import time as _time
+    now = _time.time()
+    # Evict stale entries opportunistically
+    stale = [k for k, ts in _LOG_MESSAGE_DEDUP_CACHE.items()
+             if now - ts > _LOG_MESSAGE_DEDUP_TTL_SECONDS]
+    for k in stale:
+        _LOG_MESSAGE_DEDUP_CACHE.pop(k, None)
+    key = _log_message_dedup_key(message)
+    if key in _LOG_MESSAGE_DEDUP_CACHE:
+        return True
+    _LOG_MESSAGE_DEDUP_CACHE[key] = now
+    return False
+
+
 def log_message(config: Configuration, message: Message):
+    # Always log to stdout/journald (no dedup at the logger layer — operator
+    # may want full historical record on box). Dedup ONLY at the
+    # downstream notification dispatch.
     LOGGER.log(message.level.value, message.message)
 
     n = config.notification
@@ -347,6 +392,13 @@ def log_message(config: Configuration, message: Message):
 
     # FlareWatch S40: gate notifications by FLAREWATCH_PROTOCOLS_ACTIVE
     if not _flarewatch_should_dispatch(message):
+        return
+
+    # FlareWatch 2026-05-13: dedup the SAME alert content within a 5-min
+    # window across all dispatch call sites.
+    if _log_message_should_dedup(message):
+        LOGGER.debug("log_message dedup'd; skipping notify for %s",
+                     _log_message_dedup_key(message))
         return
 
     notify_discord(n.discord, message)
