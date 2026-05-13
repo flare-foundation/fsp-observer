@@ -9,6 +9,7 @@ from py_flare_common.fsp.messaging.types import (
 )
 
 from .. import metrics
+from ..alert_text import FDC_NO_SUBMIT_SIGNATURES, build_alert
 from ..message import Message, MessageBuilder, MessageLevel
 from ..reward_epoch_manager import Entity
 from ..types import ProtocolMessageRelayed
@@ -202,7 +203,21 @@ def check_submit_signatures(
     if submit_2 is None and submit_signatures is None:
         if not early:
             issues.append(
-                mb.build(MessageLevel.ERROR, "no submitSignatures transaction"),
+                mb.build(
+                    MessageLevel.ERROR,
+                    build_alert(
+                        summary="no submitSignatures transaction",
+                        diagnosis=FDC_NO_SUBMIT_SIGNATURES["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "submit_sigs_to": entity.submit_signatures_address,
+                            "signing_policy": entity.signing_policy_address,
+                            "voting_epoch": round.voting_epoch.id,
+                            "start_unix": round.voting_epoch.start_s,
+                        },
+                        actions=FDC_NO_SUBMIT_SIGNATURES["actions"],
+                    ),
+                ),
             )
         else:
             issues.append(mb.build(level, message))

@@ -11,6 +11,12 @@ from py_flare_common.fsp.messaging.types import (
 from py_flare_common.ftso.commit import commit_hash
 
 from .. import metrics
+from ..alert_text import (
+    FTSO_NO_SUBMIT1,
+    FTSO_NO_SUBMIT_SIGNATURES,
+    FTSO_SIGNATURE_MISMATCH,
+    build_alert,
+)
 from ..message import Message, MessageBuilder, MessageLevel
 from ..reward_epoch_manager import Entity
 from ..types import ProtocolMessageRelayed
@@ -57,7 +63,22 @@ def check_submit_1(
         )
 
     if submit_1 is None and not late:
-        issues.append(mb.build(MessageLevel.ERROR, "no submit1 transaction"))
+        issues.append(
+            mb.build(
+                MessageLevel.ERROR,
+                build_alert(
+                    summary="no submit1 transaction",
+                    diagnosis=FTSO_NO_SUBMIT1["diagnosis"],
+                    evidence={
+                        "identity": entity.identity_address,
+                        "submit_addr": entity.submit_address,
+                        "voting_epoch": round.voting_epoch.id,
+                        "start_unix": round.voting_epoch.start_s,
+                    },
+                    actions=FTSO_NO_SUBMIT1["actions"],
+                ),
+            )
+        )
 
     if submit_1 is not None:
         hash_len = len(submit_1.parsed_payload.payload.commit_hash)
@@ -243,57 +264,20 @@ def check_submit_signatures(
 
     if submit_signatures is None:
         if not early:
-            # 4-section diagnostic body per 2026-05-13 alert-refinement
-            # directive. Per-round ERROR can be either a REAL outage or
-            # a FALSE POSITIVE from observer catch-up; the body helps the
-            # operator distinguish without on-box archaeology.
             issues.append(
                 mb.build(
                     MessageLevel.ERROR,
-                    (
-                        "no submitSignatures transaction\n"
-                        "\n"
-                        "DIAGNOSIS\n"
-                        "The observer scanned this voting round and saw no "
-                        "submitSignatures transaction from this entity. Two "
-                        "common causes:\n"
-                        "  (a) REAL outage. The FTSO client failed to submit. "
-                        "Investigate if this is a NEW streak of 3+ consecutive "
-                        "rounds.\n"
-                        "  (b) FALSE POSITIVE. The observer was offline during "
-                        "this round and is reporting a historical gap during "
-                        "catch-up. Correlates with a recent fsp-observer "
-                        "container restart.\n"
-                        "\n"
-                        "EVIDENCE\n"
-                        f"  identity        {entity.identity_address}\n"
-                        f"  submit_sigs_to  {entity.submit_signatures_address}\n"
-                        f"  signing_policy  {entity.signing_policy_address}\n"
-                        f"  voting_epoch    {round.voting_epoch.id}\n"
-                        f"  start_unix      {round.voting_epoch.start_s}\n"
-                        "\n"
-                        "OPERATOR ACTIONS\n"
-                        "If you JUST restarted fsp-observer and the round "
-                        "start_unix is BEFORE the restart timestamp: this is "
-                        "a FALSE POSITIVE. Alerts will stop firing within "
-                        "~2-3 rounds. Spot-check one round on Flare Explorer "
-                        "for a submitSignatures tx from submit_sigs_to to "
-                        "confirm the actual submission landed.\n"
-                        "\n"
-                        "If observer was up the whole time (REAL miss):\n"
-                        "  docker logs --tail 50 "
-                        "flare-systems-deployment-ftso-client-1\n"
-                        "  Check gas balance of submit_sigs_to on Flare "
-                        "Explorer for the round window.\n"
-                        "  Verify FSP entity registration still active via "
-                        "EntityManager.getVoterAddresses(identity).\n"
-                        "\n"
-                        "Single missed round per ~24h is acceptable (network "
-                        "reorg or transient RPC blip). 3+ consecutive misses "
-                        "indicates a real outage; escalate per docs/runbooks/"
-                        "staking-key-emergency-rotation.md if signing-key "
-                        "compromise is suspected (cross-check staking-dir "
-                        "tripwire HC.io status)."
+                    build_alert(
+                        summary="no submitSignatures transaction",
+                        diagnosis=FTSO_NO_SUBMIT_SIGNATURES["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "submit_sigs_to": entity.submit_signatures_address,
+                            "signing_policy": entity.signing_policy_address,
+                            "voting_epoch": round.voting_epoch.id,
+                            "start_unix": round.voting_epoch.start_s,
+                        },
+                        actions=FTSO_NO_SUBMIT_SIGNATURES["actions"],
                     ),
                 ),
             )
@@ -335,7 +319,18 @@ def check_submit_signatures(
             issues.append(
                 mb.build(
                     MessageLevel.ERROR,
-                    "submitSignatures signature doesn't match finalization",
+                    build_alert(
+                        summary="submitSignatures signature doesn't match finalization",
+                        diagnosis=FTSO_SIGNATURE_MISMATCH["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "expected_signer": entity.signing_policy_address,
+                            "recovered_signer": addr,
+                            "voting_epoch": round.voting_epoch.id,
+                            "start_unix": round.voting_epoch.start_s,
+                        },
+                        actions=FTSO_SIGNATURE_MISMATCH["actions"],
+                    ),
                 ),
             )
 
