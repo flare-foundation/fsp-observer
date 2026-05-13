@@ -5,6 +5,7 @@ from web3 import AsyncWeb3
 
 from configuration.types import Configuration
 from observer import metrics
+from observer.alert_text import LOW_BALANCE, build_alert
 from observer.message import Message, MessageLevel
 
 
@@ -29,10 +30,27 @@ class AddressChecker:
                 if balance <= 5e18:
                     level = MessageLevel.ERROR
 
+                balance_nat = balance / 1e18
                 messages.append(
                     mb.build(
                         level,
-                        f"low balance for {name} {addr} ({balance / 1e18:.4f} NAT)",
+                        build_alert(
+                            summary=(
+                                f"low balance for {name} {addr} "
+                                f"({balance_nat:.4f} NAT)"
+                            ),
+                            diagnosis=LOW_BALANCE["diagnosis"],
+                            evidence={
+                                "role": name,
+                                "address": addr,
+                                "balance_nat": f"{balance_nat:.4f}",
+                                "threshold_nat": f"{config.fee_threshold:.4f}",
+                                "severity": (
+                                    "ERROR" if balance <= 5e18 else "WARNING"
+                                ),
+                            },
+                            actions=LOW_BALANCE["actions"],
+                        ),
                     )
                 )
 

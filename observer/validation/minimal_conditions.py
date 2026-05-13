@@ -8,6 +8,7 @@ from py_flare_common.ftso.median import FtsoMedian
 
 from configuration.config import Protocol
 from observer import metrics
+from observer.alert_text import FAST_UPDATE_MISSED, build_alert
 from observer.message import Message, MessageLevel
 from observer.reward_epoch_manager import Entity, SigningPolicy
 
@@ -124,7 +125,20 @@ class MinimalConditions:
                 messages.append(
                     mb.build(
                         level,
-                        f"didn't submit a fast update in {n_blocks} blocks",
+                        build_alert(
+                            summary=(
+                                f"didn't submit a fast update in {n_blocks} blocks"
+                            ),
+                            diagnosis=FAST_UPDATE_MISSED["diagnosis"],
+                            evidence={
+                                "identity": entity.identity_address,
+                                "n_blocks_missed": n_blocks,
+                                "current_block": current_block,
+                                "last_update_block": last_update,
+                                "probability_ppb": probability_ppb,
+                            },
+                            actions=FAST_UPDATE_MISSED["actions"],
+                        ),
                     )
                 )
             return messages
@@ -147,8 +161,24 @@ class MinimalConditions:
         messages.append(
             mb.build(
                 level,
-                f"didn't submit a fast update in {n_blocks} blocks "
-                f"(false positive probability: {probability_ppb / 10_000_000:.5f})%",
+                build_alert(
+                    summary=(
+                        f"didn't submit a fast update in {n_blocks} blocks "
+                        f"(false positive probability: "
+                        f"{probability_ppb / 10_000_000:.5f}%)"
+                    ),
+                    diagnosis=FAST_UPDATE_MISSED["diagnosis"],
+                    evidence={
+                        "identity": entity.identity_address,
+                        "n_blocks_missed": n_blocks,
+                        "current_block": current_block,
+                        "last_update_block": last_update,
+                        "probability_ppb": probability_ppb,
+                        "max_exponent": max_exponent,
+                        "severity_threshold": "<= 100ppb -> CRITICAL",
+                    },
+                    actions=FAST_UPDATE_MISSED["actions"],
+                ),
             )
         )
 
