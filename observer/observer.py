@@ -66,6 +66,7 @@ from .notification import (
     notify_slack,
     notify_telegram,
 )
+from .portal_post import mirror_to_portal
 from .voting_round import (
     VotingRoundManager,
     WTxData,
@@ -406,6 +407,14 @@ def log_message(config: Configuration, message: Message):
     notify_slack(n.slack, message)
     notify_telegram(n.telegram, message)
     notify_generic(n.generic, message)
+
+    # FlareWatch: mirror this alert into the portal `posts` table (the
+    # operator-facing source of truth the Activity page renders from).
+    # Additive to the dispatch above and runs LAST — mirror_to_portal is
+    # best-effort and never raises, so a portal/DB problem cannot affect
+    # the Discord path. Inherits the 300s dedup gate above for free, so
+    # one row lands per state, not per polling cycle.
+    mirror_to_portal(config, message)
 
 
 async def cron(
