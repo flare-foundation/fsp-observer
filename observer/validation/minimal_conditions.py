@@ -1,3 +1,4 @@
+import time
 from collections import deque
 from collections.abc import Sequence
 from enum import Enum
@@ -26,6 +27,11 @@ class MinimalConditionsConfig:
     fast_updates_updates_per_block = 1.5
     staking_threshold_bips = 8000
     fdc_participation_threshold_bips = 8000
+    # FlareWatch: the anchor-feed alert is trend-aware — re-alert on a
+    # further drop of at least this many bips, else re-remind at most once
+    # per this many seconds while the rate sits flat below threshold.
+    ftso_anchor_drop_margin_bips = 200
+    ftso_anchor_reminder_seconds = 6 * 60 * 60
 
 
 class MinimalConditions:
@@ -34,6 +40,13 @@ class MinimalConditions:
     time_period: Interval = Interval.LAST_2_HOURS
 
     network: int | None = None
+
+    # FlareWatch: FTSO anchor-feed alert state — trend-aware + deduped.
+    # The raw check re-emitted the WARNING every cycle the 2h trailing rate
+    # sat below threshold, and the embedded % defeated observer.py's dedup.
+    _anchor_alerted: bool = False
+    _anchor_last_bips: int | None = None
+    _anchor_alerted_at: float | None = None
 
     def for_network(self, network: int) -> Self:
         self.network = network
@@ -82,16 +95,64 @@ class MinimalConditions:
             identity_address=metrics.identity_address
         ).set(success_rate_bips)
 
-        if success_rate_bips < MinimalConditionsConfig.ftso_median_threshold_bips:
-            messages.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        "not meeting minimal condition for FTSO anchor feeds in past "
-                        f"two hours - success rate: {success_rate_bips / 100:.2f}%"
-                    ),
+        # FlareWatch: trend-aware, deduped anchor-feed alerting. The raw
+        # check re-emitted this WARNING every cycle while the 2h trailing
+        # rate sat below threshold. Now: alert once on the breach, again
+        # only on a meaningful further drop or a periodic reminder while it
+        # sits flat, stay quiet while it recovers on its own, and emit one
+        # INFO when it climbs back to the minimal condition.
+        threshold = MinimalConditionsConfig.ftso_median_threshold_bips
+        prev = self._anchor_last_bips
+        self._anchor_last_bips = success_rate_bips
+        pct = success_rate_bips / 100
+
+        if success_rate_bips >= threshold:
+            if self._anchor_alerted:
+                self._anchor_alerted = False
+                self._anchor_alerted_at = None
+                messages.append(
+                    mb.build(
+                        MessageLevel.INFO,
+                        (
+                            "FTSO anchor feeds recovered - success rate back "
+                            f"to {pct:.2f}% (>= minimal condition)"
+                        ),
+                    )
                 )
+            return messages
+
+        # success_rate_bips < threshold
+        now = time.monotonic()
+        drop_margin = MinimalConditionsConfig.ftso_anchor_drop_margin_bips
+        reminder_s = MinimalConditionsConfig.ftso_anchor_reminder_seconds
+        climbing = prev is not None and success_rate_bips > prev
+        worsening = prev is not None and success_rate_bips <= prev - drop_margin
+        stale = (
+            self._anchor_alerted_at is not None
+            and now - self._anchor_alerted_at >= reminder_s
+        )
+
+        text: str | None = None
+        if not self._anchor_alerted:
+            text = (
+                "not meeting minimal condition for FTSO anchor feeds in past "
+                f"two hours - success rate: {pct:.2f}%"
             )
+        elif worsening:
+            text = (
+                "still not meeting minimal condition for FTSO anchor feeds - "
+                f"rate degrading to {pct:.2f}% (was {prev / 100:.2f}%)"
+            )
+        elif stale and not climbing:
+            text = (
+                "still not meeting minimal condition for FTSO anchor feeds - "
+                f"success rate {pct:.2f}% (unchanged)"
+            )
+
+        if text is not None:
+            self._anchor_alerted = True
+            self._anchor_alerted_at = now
+            messages.append(mb.build(MessageLevel.WARNING, text))
 
         return messages
 
