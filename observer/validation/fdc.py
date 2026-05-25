@@ -201,7 +201,16 @@ def check_submit_2(
                             MessageLevel.ERROR,
                             build_alert(
                                 summary=(
-                                    f"submit2 didn't confirm consensus request "
+                                    # Lead with [data:<source>] so the chain
+                                    # being attested is unambiguous. The
+                                    # `network:songbird` prefix added by
+                                    # build_str() refers to the protocol
+                                    # network (where the FDC vote runs), NOT
+                                    # the source chain whose RPC actually
+                                    # caused the miss -- operators routinely
+                                    # misread the legacy header (see 2026-05-
+                                    # 24 XRP RPC fallback storm).
+                                    f"[data:{si.representation}] submit2 didn't confirm consensus request "
                                     f"{at.representation}/{si.representation} "
                                     f"at index {idx}"
                                 ),

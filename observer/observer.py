@@ -381,6 +381,82 @@ def _log_message_should_dedup(message: Message) -> bool:
     return False
 
 
+# FlareWatch 2026-05-25: ongoing-issue coalescer. Sits BELOW the 5min
+# dedup cache (which catches same-round duplicates from multiple
+# call sites). This layer catches the same logical issue repeating
+# across DIFFERENT rounds — the pattern that flooded the operator
+# inbox during the 2026-05-24 XRP RPC fallback storm (one consensus-
+# miss alert per round per attestation_type, ~12 alerts per voting
+# cycle while GetBlock was quota-exhausted).
+#
+# Cadence per operator directive: first occurrence immediate;
+# subsequent occurrences within 1h window suppressed + counted;
+# next occurrence after window includes "+N suppressed in last 1h"
+# preamble in the message body. Operator silence on the suppressed
+# run is acceptable per feedback_rolling_subscription_reminders
+# (silence = aware + still working the cause).
+#
+# Key DROPS round.id — distinct rounds of the same logical issue
+# coalesce. The headline is captured INCLUDING the [data:<source>]
+# prefix so per-chain consensus misses coalesce per-chain (one
+# XRP-flood preamble, one DOGE-flood preamble) instead of fusing
+# all chains into one bucket.
+_COALESCE_CACHE: dict[tuple, dict] = {}  # key -> {first_at, last_at, count}
+_COALESCE_WINDOW_SECONDS = 3600
+
+
+def _coalesce_key(message: Message) -> tuple:
+    return (
+        message.level,
+        message.network,
+        message.protocol,
+        (message.message.split("\n", 1)[0] if message.message else "")[:120],
+    )
+
+
+def _coalesce_decision(message: Message) -> tuple[bool, int]:
+    """Returns (should_dispatch, suppressed_count_since_last_fire).
+
+    - First occurrence (no state OR window expired): dispatch=True,
+      suppressed_count = prior cycle's count (0 on first-ever).
+    - Within window: dispatch=False, suppressed_count incremented.
+    """
+    import time as _time
+    now = _time.time()
+    key = _coalesce_key(message)
+    state = _COALESCE_CACHE.get(key)
+    if state is None:
+        _COALESCE_CACHE[key] = {"first_at": now, "last_at": now, "count": 0}
+        return True, 0
+    if now - state["first_at"] > _COALESCE_WINDOW_SECONDS:
+        prior_count = state["count"]
+        _COALESCE_CACHE[key] = {"first_at": now, "last_at": now, "count": 0}
+        return True, prior_count
+    state["last_at"] = now
+    state["count"] += 1
+    return False, 0
+
+
+def _coalesce_apply_preamble(message: Message, suppressed: int) -> Message:
+    """Returns a new Message with the '+N suppressed' preamble injected.
+
+    The preamble lands at the TOP of the message body so Discord
+    embeds (which truncate at 4096 chars) keep it visible even if
+    later body sections are clipped.
+    """
+    if suppressed <= 0:
+        return message
+    window_min = _COALESCE_WINDOW_SECONDS // 60
+    preamble = (
+        f"[STILL ONGOING] +{suppressed} similar alert(s) suppressed in "
+        f"last ~{window_min} min; firing this update.\n\n"
+    )
+    import copy as _copy
+    new_msg = _copy.copy(message)
+    new_msg.message = preamble + message.message
+    return new_msg
+
+
 def log_message(config: Configuration, message: Message):
     # Always log to stdout/journald (no dedup at the logger layer — operator
     # may want full historical record on box). Dedup ONLY at the
@@ -401,6 +477,19 @@ def log_message(config: Configuration, message: Message):
         LOGGER.debug("log_message dedup'd; skipping notify for %s",
                      _log_message_dedup_key(message))
         return
+
+    # FlareWatch 2026-05-25: ongoing-issue coalesce. After the 5-min
+    # same-round dedup, collapse same-logical-issue alerts across
+    # different rounds within a 1h window. First occurrence fires;
+    # subsequent are suppressed + counted; next post-window fire
+    # includes "+N suppressed" preamble.
+    should_dispatch, suppressed = _coalesce_decision(message)
+    if not should_dispatch:
+        LOGGER.debug("log_message coalesced (window-suppressed); key=%s",
+                     _coalesce_key(message))
+        return
+    if suppressed > 0:
+        message = _coalesce_apply_preamble(message, suppressed)
 
     notify_discord(n.discord, message)
     notify_discord_embed(n.discord_embed, message)
