@@ -1,6 +1,0 @@
-# lint & format
-ruff==0.13.3
-pre-commit==4.3.0
-
-# additional types
-types-requests

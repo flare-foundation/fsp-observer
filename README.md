@@ -37,15 +37,14 @@ docker run \
     ghcr.io/flare-foundation/fsp-observer:main
 ```
 
-Alternatively python can be used to run:
+Alternatively [uv](https://docs.astral.sh/uv/) can be used to run:
 
 ```bash
-python -m venv venv
-pip install -r requirements.txt
+uv sync
 # optionally create .env file
 RPC_BASE_URL="https://flare-api.flare.network" \
   IDENTITY_ADDRESS="0x0000000000000000000000000000000000000000" \
-  python main.py
+  uv run python main.py
 ```
 
 ## Environment variables

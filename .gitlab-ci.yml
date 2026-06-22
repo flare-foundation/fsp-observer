@@ -1,14 +1,20 @@
 # templates
- 
+variables:
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+
 .test_template: &test
   stage: test
-  variables:
-    GIT_STRATEGY: none
-  image:
-    name: $CI_REGISTRY_IMAGE:$CI_COMMIT_BRANCH
-    entrypoint: [""]
-  only:
-    - branches
+  image: ghcr.io/astral-sh/uv:python3.13-trixie-slim
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .cache/uv
+  before_script:
+    - uv sync --locked
+  rules:
+    - if: $CI_COMMIT_BRANCH
 
 .build_template:
   stage: build
@@ -55,8 +61,5 @@ build_tags:
 test_ruff:
   <<: *test
   script:
-    - cd /app
-    - pip install -r dev-requirements.txt
-    - python -m ruff check .
-    - python -m ruff format --check
-
+    - uv run ruff check .
+    - uv run ruff format --check

@@ -4,11 +4,14 @@
 
 ### Python environment and dependencies
 
+Dependencies are managed with [uv](https://docs.astral.sh/uv/). Install the
+project together with dev tooling into a local virtual environment:
+
 ```sh
-python -m venv venv
-source ./venv/bin/activate
-pip install -U -r requirements.txt -r dev-requirements.txt
+uv sync
 ```
+
+Run commands inside the environment with `uv run`, e.g. `uv run python main.py`.
 
 ### Git hooks and linters
 
@@ -16,11 +19,11 @@ commited code should be linted and formatted
 
 ```sh
 # format
-ruff format
+uv run ruff format
 # lint
-ruff check 
+uv run ruff check
 # optionally auto fix
-ruff check --fix
+uv run ruff check --fix
 ```
 
 enforce this check with a pre commit hook

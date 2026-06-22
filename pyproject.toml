@@ -1,3 +1,23 @@
+[project]
+name = "fsp-observer"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "requests==2.32.5",
+    "py-flare-common==0.1.6",
+    "attrs==25.3.0",
+    "python-dotenv==1.1.1",
+    "web3==7.13.0",
+    "prometheus-client==0.21.1",
+]
+
+[dependency-groups]
+dev = [
+    "ruff==0.13.3",
+    "pre-commit==4.3.0",
+    "types-requests",
+]
+
 [tool.ruff]
 extend-exclude = ['venv', 'env', 'migrations']
 
@@ -27,4 +47,3 @@ ignore = [
 
 [tool.pyright]
 reportIncompatibleVariableOverride = false
-
