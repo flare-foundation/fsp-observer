@@ -148,7 +148,12 @@ def get_config() -> Configuration:
     rpc_url = rpc_base_url + "/ext/bc/C/rpc"
     p_chain_rpc_url = rpc_base_url + "/ext/bc/P"
 
-    w = Web3(Web3.HTTPProvider(rpc_url))
+    rpc_api_key = os.environ.get("RPC_API_KEY")
+    rpc_headers = {"Content-Type": "application/json"}
+    if rpc_api_key:
+        rpc_headers["x-apikey"] = rpc_api_key
+
+    w = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"headers": rpc_headers}))
     if not w.is_connected():
         raise ConfigError(f"Unable to connect to rpc with provided {rpc_url=}")
 
@@ -176,6 +181,7 @@ def get_config() -> Configuration:
         fee_threshold=fee_threshold,
         metrics=get_metrics_config(),
         log_level=log_level,
+        rpc_api_key=rpc_api_key
     )
 
     return config

@@ -1,3 +1,4 @@
+import logging
 from collections import defaultdict
 from typing import Self
 
@@ -22,10 +23,11 @@ from web3.types import BlockData, TxData
 from .reward_epoch_manager import Entity, SigningPolicy
 from .types import AttestationRequest, ProtocolMessageRelayed
 
+LOGGER = logging.getLogger(__name__)
+
 
 @frozen
 class WTxData:
-    wrapped: TxData
     hash: HexBytes
     to_address: ChecksumAddress | None
     input: HexBytes
@@ -54,7 +56,6 @@ class WTxData:
         assert "timestamp" in block_data
 
         return cls(
-            wrapped=tx_data,
             hash=tx_data["hash"],
             to_address=tx_data.get("to"),
             input=tx_data["input"],
@@ -146,12 +147,13 @@ class VotingRoundProtocol[S1, S2, SS]:
 class FtsoVotingRoundProtocol(
     VotingRoundProtocol[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]
 ):
-    medians: list[FtsoMedian] = field(factory=list)
+    medians: list[FtsoMedian | None] = field(factory=list)
 
     def calculate_medians(
         self,
         epoch: VotingEpoch,
         signing_policy: SigningPolicy,
+        is_testnet: bool = False,
     ):
         next = epoch.next
         rd = next.reveal_deadline()
@@ -188,7 +190,12 @@ class FtsoVotingRoundProtocol(
 
             votes_to_consider.append((entity, submit_1, submit_2))
 
+        if not number_of_feeds:
+            return
+
         nr_feed = max(number_of_feeds.items(), key=lambda x: x[1])[0]
+
+        empty_feed_indices: list[int] = []
 
         for i in range(nr_feed):
             ftso_votes = []
@@ -214,9 +221,21 @@ class FtsoVotingRoundProtocol(
             ftso_votes.sort(key=lambda x: x.value)
 
             median = calculate_median(ftso_votes)
-            assert median is not None
-
+            if median is None:
+                if not is_testnet:
+                    raise AssertionError(
+                        f"voting_epoch={epoch.id}: feed index {i} has no valid votes "
+                        f"— all {len(votes_to_consider)} voter(s) submitted None or "
+                        f"commit/reveal didn't match"
+                    )
+                empty_feed_indices.append(i)
             self.medians.append(median)
+
+        if empty_feed_indices:
+            LOGGER.debug(
+                f"voting_epoch={epoch.id}: no valid votes for feed indices "
+                f"{empty_feed_indices} (out of {nr_feed} feeds)"
+            )
 
 
 @define

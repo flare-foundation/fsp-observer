@@ -30,6 +30,7 @@ from web3.types import TxData
 
 from configuration.types import (
     Configuration,
+    Contract,
     un_prefix_0x,
 )
 from observer.contract_manager import ContractManager
@@ -230,6 +231,10 @@ async def get_signing_policy_events(
     end_block: int,
 ) -> SigningPolicy:
     # reads logs for given blocks for the informations about the signing policy
+    LOGGER.info(
+        f"Fetching signing policy events: reward_epoch={reward_epoch.id}"
+        f" | blocks={start_block}..{end_block}"
+    )
 
     builder = SigningPolicy.builder().for_epoch(reward_epoch)
 
@@ -238,6 +243,21 @@ async def get_signing_policy_events(
         config.contracts.FlareSystemsCalculator,
         config.contracts.Relay,
         config.contracts.FlareSystemsManager,
+    ]
+
+    # Coston/Coston2 run upgraded contracts with a different event ABI than Songbird/Flare.
+    # Registering both sets of topic hashes lets the same binary decode events on all chains.
+    _stable_contracts = [
+        Contract(
+            "VoterRegistry_stable",
+            config.contracts.VoterRegistry.address,
+            "configuration/artifacts/VoterRegistry_stable.json",
+        ),
+        Contract(
+            "FlareSystemsCalculator_stable",
+            config.contracts.FlareSystemsCalculator.address,
+            "configuration/artifacts/FlareSystemsCalculator_stable.json",
+        ),
     ]
 
     event_names = {
@@ -253,7 +273,7 @@ async def get_signing_policy_events(
     }
     event_signatures = {
         e.signature: e
-        for c in contracts
+        for c in contracts + _stable_contracts
         for e in c.events.values()
         if e.name in event_names
     }
@@ -283,6 +303,10 @@ async def get_signing_policy_events(
         }
     )
     block_logs.extend(_relay_patch_sps)
+    LOGGER.info(
+        f"Fetched {len(block_logs)} logs for signing policy "
+        f"(reward_epoch={reward_epoch.id}, blocks={start_block}..{end_block})"
+    )
 
     for log in block_logs:
         sig = log["topics"][0]
@@ -377,8 +401,11 @@ def _record_submit_metrics(
 
 async def observer_loop(config: Configuration) -> None:
     logging.getLogger().setLevel(config.log_level)
+    rpc_headers = {"Content-Type": "application/json"}
+    if config.rpc_api_key:
+        rpc_headers["x-apikey"] = config.rpc_api_key
     w = AsyncWeb3(
-        AsyncWeb3.AsyncHTTPProvider(config.rpc_url),
+        AsyncWeb3.AsyncHTTPProvider(config.rpc_url, request_kwargs={"headers": rpc_headers}),
         middleware=[ExtraDataToPOAMiddleware],
     )
 
@@ -465,13 +492,22 @@ async def observer_loop(config: Configuration) -> None:
             f" | nodes={_init_node_ids}"
         )
         await _init_entity.check_addresses(config, w)
-        _unclaimed_init = await RewardManager().get_unclaimed_rewards(
-            _init_entity, config, w
-        )
+        try:
+            _unclaimed_init = await asyncio.wait_for(
+                RewardManager().get_unclaimed_rewards(_init_entity, config, w),
+                timeout=60,
+            )
+        except asyncio.TimeoutError:
+            LOGGER.warning("Unclaimed rewards check timed out after 60s — skipping")
+            _unclaimed_init = []
         for m in _unclaimed_init:
             log_message(config, m)
     else:
-        LOGGER.warning(f"Entity {tia} NOT found in current signing policy!")
+        raise KeyError(
+            f"Identity address {tia} is not registered as a voter in signing policy "
+            f"for reward epoch {reward_epoch.id} — cannot observe. "
+            f"Registered entities: {list(signing_policy.entity_mapper.by_identity_address.keys())}"
+        )
 
     if config.metrics.enabled:
         metrics.start_metrics_server(config.metrics.port, config.metrics.address)
@@ -502,7 +538,7 @@ async def observer_loop(config: Configuration) -> None:
     while True:
         latest_block = await w.eth.block_number
         if block_number == latest_block:
-            time.sleep(2)
+            await asyncio.sleep(2)
             continue
 
         block_number += 1
@@ -578,7 +614,7 @@ async def observer_loop(config: Configuration) -> None:
     while True:
         latest_block = await w.eth.block_number
         if block_number == latest_block:
-            time.sleep(2)
+            await asyncio.sleep(2)
             continue
 
         for block in range(block_number, latest_block):
@@ -635,7 +671,14 @@ async def observer_loop(config: Configuration) -> None:
                 minimal_conditions.reward_epoch_id = signing_policy.reward_epoch.id
 
                 entity = signing_policy.entity_mapper.by_identity_address[tia]
-                unclaimed_rewards = await rm.get_unclaimed_rewards(entity, config, w)
+                try:
+                    unclaimed_rewards = await asyncio.wait_for(
+                        rm.get_unclaimed_rewards(entity, config, w),
+                        timeout=60,
+                    )
+                except asyncio.TimeoutError:
+                    LOGGER.warning("Unclaimed rewards check timed out after 60s — skipping")
+                    unclaimed_rewards = []
                 for m in unclaimed_rewards:
                     log_message(config, m)
 
@@ -967,8 +1010,9 @@ async def observer_loop(config: Configuration) -> None:
                 and len(node_ids) > 0
             ):
                 try:
+                    p_chain_headers = {"x-apikey": config.rpc_api_key} if config.rpc_api_key else {}
                     response = requests.post(
-                        config.p_chain_rpc_url, json=payload, timeout=10
+                        config.p_chain_rpc_url, json=payload, headers=p_chain_headers, timeout=10
                     )
                     response.raise_for_status()
                     result = response.json()

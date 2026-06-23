@@ -10,7 +10,7 @@ from py_flare_common.fsp.messaging.types import (
     SubmitSignatures,
 )
 
-from configuration.config import Protocol
+from configuration.config import ChainId, Protocol
 from configuration.types import Configuration
 
 from ..message import Message
@@ -56,7 +56,8 @@ def validate_round(
     config: Configuration,
 ) -> Sequence[Message]:
     # TODO:(matej) move this somewhere else
-    round.ftso.calculate_medians(round.voting_epoch, signing_policy)
+    _is_testnet = config.chain_id in (ChainId.COSTON, ChainId.COSTON2)
+    round.ftso.calculate_medians(round.voting_epoch, signing_policy, is_testnet=_is_testnet)
 
     issues: list[Message] = []
 

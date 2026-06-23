@@ -65,6 +65,7 @@ RPC_BASE_URL="https://flare-api.flare.network" \
 | `METRICS_PORT` | no | `8000` | Prometheus metrics server port |
 | `METRICS_ADDRESS` | no | `0.0.0.0` | Prometheus metrics server bind address |
 | `LOG_LEVEL` | no | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `RPC_API_KEY` | no | - | Use RPC API key where header is `x-apikey` |
 
 ## Prometheus metrics
 
