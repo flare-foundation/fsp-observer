@@ -11,6 +11,17 @@ from py_flare_common.fsp.messaging.types import (
 from py_flare_common.ftso.commit import commit_hash
 
 from .. import metrics
+from ..alert_text import (
+    FTSO_COMMIT_REVEAL_MISMATCH,
+    FTSO_NO_SUBMIT1,
+    FTSO_NO_SUBMIT_SIGNATURES,
+    FTSO_SIGNATURE_MISMATCH,
+    FTSO_SUBMIT1_HASH_LENGTH,
+    FTSO_SUBMIT1_LATE,
+    FTSO_SUBMIT2_MISSING_OR_OUT_OF_WINDOW,
+    GRACE_PERIOD_LATE_SIGNATURES,
+    build_alert,
+)
 from ..message import Message, MessageBuilder, MessageLevel
 from ..reward_epoch_manager import Entity
 from ..types import ProtocolMessageRelayed
@@ -31,6 +42,8 @@ def _check_type(f: ValidateFn[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]):
 def check_submit_1(
     submit_1: WParsedPayload[FtsoSubmit1] | None,
     message_builder: MessageBuilder,
+    entity: Entity,
+    round: VotingRound,
     extracted_round: "ExtractedEntityVotingRound[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]",  # noqa: E501
     **_,
 ) -> Sequence[Message]:
@@ -52,12 +65,38 @@ def check_submit_1(
         issues.append(
             mb.build(
                 level,
-                (f"submit1 transactions sent after correct time interval: {tx_hashes}"),
+                build_alert(
+                    summary="submit1 transactions sent after correct time interval",
+                    diagnosis=FTSO_SUBMIT1_LATE["diagnosis"],
+                    evidence={
+                        "identity": entity.identity_address,
+                        "submit_addr": entity.submit_address,
+                        "voting_epoch": round.voting_epoch.id,
+                        "start_unix": round.voting_epoch.start_s,
+                        "late_tx_hashes": tx_hashes,
+                    },
+                    actions=FTSO_SUBMIT1_LATE["actions"],
+                ),
             )
         )
 
     if submit_1 is None and not late:
-        issues.append(mb.build(MessageLevel.ERROR, "no submit1 transaction"))
+        issues.append(
+            mb.build(
+                MessageLevel.ERROR,
+                build_alert(
+                    summary="no submit1 transaction",
+                    diagnosis=FTSO_NO_SUBMIT1["diagnosis"],
+                    evidence={
+                        "identity": entity.identity_address,
+                        "submit_addr": entity.submit_address,
+                        "voting_epoch": round.voting_epoch.id,
+                        "start_unix": round.voting_epoch.start_s,
+                    },
+                    actions=FTSO_NO_SUBMIT1["actions"],
+                ),
+            )
+        )
 
     if submit_1 is not None:
         hash_len = len(submit_1.parsed_payload.payload.commit_hash)
@@ -65,7 +104,26 @@ def check_submit_1(
             issues.append(
                 mb.build(
                     MessageLevel.ERROR,
-                    f"submit1 commit hash unexpeted length ({hash_len}), expected 32",
+                    build_alert(
+                        summary=(
+                            f"submit1 commit hash unexpected length "
+                            f"({hash_len}), expected 32"
+                        ),
+                        diagnosis=FTSO_SUBMIT1_HASH_LENGTH["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "submit_addr": entity.submit_address,
+                            "voting_epoch": round.voting_epoch.id,
+                            "actual_length": hash_len,
+                            "expected_length": 32,
+                            "tx_hash": (
+                                submit_1.wtx_data.hash.to_0x_hex()
+                                if hasattr(submit_1, "wtx_data")
+                                else "(unavailable)"
+                            ),
+                        },
+                        actions=FTSO_SUBMIT1_HASH_LENGTH["actions"],
+                    ),
                 )
             )
 
@@ -124,13 +182,32 @@ def check_submit_2(
         message = "no submit2 transaction"
 
     if submit_2 is None:
-        if submit_1 is not None:
+        reveal_offence = submit_1 is not None
+        if reveal_offence:
             metrics.REVEAL_OFFENCE.labels(
                 identity_address=metrics.identity_address, protocol="ftso"
             ).inc()
             level = MessageLevel.CRITICAL
-            message += ". This caused a reveal offence"
-        issues.append(mb.build(level, message))
+        issues.append(
+            mb.build(
+                level,
+                build_alert(
+                    summary=(
+                        message + (". REVEAL OFFENCE." if reveal_offence else "")
+                    ),
+                    diagnosis=FTSO_SUBMIT2_MISSING_OR_OUT_OF_WINDOW["diagnosis"],
+                    evidence={
+                        "identity": entity.identity_address,
+                        "submit_addr": entity.submit_address,
+                        "voting_epoch": round.voting_epoch.id,
+                        "start_unix": round.voting_epoch.start_s,
+                        "submit1_present": submit_1 is not None,
+                        "reveal_offence": reveal_offence,
+                    },
+                    actions=FTSO_SUBMIT2_MISSING_OR_OUT_OF_WINDOW["actions"],
+                ),
+            )
+        )
 
     if submit_1 is not None and submit_2 is not None:
         # TODO:(matej) should just build back from parsed message
@@ -147,7 +224,23 @@ def check_submit_2(
             issues.append(
                 mb.build(
                     MessageLevel.CRITICAL,
-                    "commit hash and reveal didn't match, causing reveal offence",
+                    build_alert(
+                        summary=(
+                            "commit hash and reveal didn't match, "
+                            "causing reveal offence"
+                        ),
+                        diagnosis=FTSO_COMMIT_REVEAL_MISMATCH["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "submit_addr": entity.submit_address,
+                            "voting_epoch": round.voting_epoch.id,
+                            "commit_hash_in_submit1": (
+                                submit_1.parsed_payload.payload.commit_hash.hex()
+                            ),
+                            "computed_from_reveal": hashed,
+                        },
+                        actions=FTSO_COMMIT_REVEAL_MISMATCH["actions"],
+                    ),
                 ),
             )
 
@@ -244,7 +337,21 @@ def check_submit_signatures(
     if submit_signatures is None:
         if not early:
             issues.append(
-                mb.build(MessageLevel.ERROR, "no submitSignatures transaction"),
+                mb.build(
+                    MessageLevel.ERROR,
+                    build_alert(
+                        summary="no submitSignatures transaction",
+                        diagnosis=FTSO_NO_SUBMIT_SIGNATURES["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "submit_sigs_to": entity.submit_signatures_address,
+                            "signing_policy": entity.signing_policy_address,
+                            "voting_epoch": round.voting_epoch.id,
+                            "start_unix": round.voting_epoch.start_s,
+                        },
+                        actions=FTSO_NO_SUBMIT_SIGNATURES["actions"],
+                    ),
+                ),
             )
         else:
             issues.append(mb.build(level, message))
@@ -262,7 +369,24 @@ def check_submit_signatures(
             issues.append(
                 mb.build(
                     MessageLevel.WARNING,
-                    "no submitSignatures during grace period, causing loss of rewards",
+                    build_alert(
+                        summary=(
+                            "submitSignatures sent after grace period, "
+                            "causing loss of rewards"
+                        ),
+                        diagnosis=GRACE_PERIOD_LATE_SIGNATURES["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "submit_sigs_to": entity.submit_signatures_address,
+                            "voting_epoch": round.voting_epoch.id,
+                            "deadline_unix": deadline,
+                            "actual_tx_ts": submit_signatures.wtx_data.timestamp,
+                            "late_by_seconds": (
+                                submit_signatures.wtx_data.timestamp - deadline
+                            ),
+                        },
+                        actions=GRACE_PERIOD_LATE_SIGNATURES["actions"],
+                    ),
                 )
             )
 
@@ -284,7 +408,18 @@ def check_submit_signatures(
             issues.append(
                 mb.build(
                     MessageLevel.ERROR,
-                    "submitSignatures signature doesn't match finalization",
+                    build_alert(
+                        summary="submitSignatures signature doesn't match finalization",
+                        diagnosis=FTSO_SIGNATURE_MISMATCH["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "expected_signer": entity.signing_policy_address,
+                            "recovered_signer": addr,
+                            "voting_epoch": round.voting_epoch.id,
+                            "start_unix": round.voting_epoch.start_s,
+                        },
+                        actions=FTSO_SIGNATURE_MISMATCH["actions"],
+                    ),
                 ),
             )
 

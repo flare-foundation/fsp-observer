@@ -136,6 +136,50 @@ CONTRACT_ADDRESS_WRONG = Counter(
 )
 
 # ---------------------------------------------------------------------------
+# FDC consensus / submit2 quality (logger-only events promoted to Counters)
+# ---------------------------------------------------------------------------
+#
+# These three counters back ERROR-class log messages emitted from
+# observer/validation/fdc.py that were previously logger-only — no
+# Prometheus surface meant downstream consumers (FlareWatch agent's C9
+# cluster surface, F1-derived alarm playbooks) had no way to track
+# rate or count.
+#
+# Cardinality note (FDC_SUBMIT2_CONSENSUS_MISS):
+# attestation_type and source_id are both 32-byte fields per
+# py_flare_common, so theoretically unbounded. In practice the Flare
+# protocol uses a small known set (~7 attestation types × ~6 source
+# ids = ~42 max combos per identity). Acceptable as Prometheus labels;
+# a future protocol expansion that pushes cardinality high enough to
+# matter would need to revisit (move to JSON payload field). Counter
+# is NOT pre-initialized via initialize_labels — labels are added on
+# first emission so we don't enumerate combos we don't actually see.
+
+FDC_SUBMIT1_UNEXPECTED = Counter(
+    "flare_fsp_fdc_submit1_unexpected_total",
+    "Total rounds where an FDC submit1 transaction was found "
+    "(FDC protocol does not use submit1; presence indicates misconfig)",
+    ["identity_address"],
+)
+
+FDC_SUBMIT2_BIT_VOTE_LENGTH_MISMATCH = Counter(
+    "flare_fsp_fdc_submit2_bit_vote_length_mismatch_total",
+    "Total rounds where the FDC submit2 bit-vote length did not match "
+    "the number of consensus requests in the round",
+    ["identity_address"],
+)
+
+FDC_SUBMIT2_CONSENSUS_MISS = Counter(
+    "flare_fsp_fdc_submit2_consensus_miss_total",
+    "Total per-(attestation_type, source_id) consensus requests where "
+    "submit2 did not confirm a request that was part of consensus. "
+    "Operators may have intentionally opted out of certain "
+    "(attestation_type, source_id) combos via downstream policy; "
+    "this counter records the raw observation regardless.",
+    ["identity_address", "attestation_type", "source_id"],
+)
+
+# ---------------------------------------------------------------------------
 # Unclaimed rewards
 # ---------------------------------------------------------------------------
 

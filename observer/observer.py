@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import os
 import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Sequence
@@ -28,6 +29,7 @@ from web3._utils.events import get_event_data
 from web3.middleware import ExtraDataToPOAMiddleware
 from web3.types import TxData
 
+from configuration.config import Protocol
 from configuration.types import (
     Configuration,
     un_prefix_0x,
@@ -64,6 +66,7 @@ from .notification import (
     notify_slack,
     notify_telegram,
 )
+from .portal_post import mirror_to_portal
 from .voting_round import (
     VotingRoundManager,
     WTxData,
@@ -162,11 +165,11 @@ def calculate_update_from_tx(config: Configuration, w: AsyncWeb3, tx: TxData):
     return signing_policy_address, address, signed_array
 
 
-async def get_block_production(w: AsyncWeb3) -> float:
+async def get_block_production(w: AsyncWeb3, lookback: int = 1_000_000) -> float:
     latest_block = await w.eth.get_block("latest")
     assert "timestamp" in latest_block
     assert "number" in latest_block
-    to_compare = min(1_000_000, int(latest_block["number"]) - 1)
+    to_compare = min(lookback, int(latest_block["number"]) - 1)
     comparison_block = await w.eth.get_block(int(latest_block["number"]) - to_compare)
     assert "timestamp" in comparison_block
     time_delta = latest_block["timestamp"] - comparison_block["timestamp"]
@@ -317,18 +320,190 @@ async def get_signing_policy_events(
     return builder.build()
 
 
+# FlareWatch S40 (2026-05-07): Operator-deferral-aware notification filter.
+# Reads FLAREWATCH_PROTOCOLS_ACTIVE from env (comma-separated lowercase
+# protocol names matching Protocol.id_to_name() output: "ftso", "fdc",
+# "fast updates", "staking"). Messages tagged with a protocol NOT in the
+# whitelist get logged locally but are NOT dispatched to notification
+# channels. Default (env unset or empty): all protocols active = original
+# upstream behavior. Untagged messages (e.g. observer crashes) always
+# dispatch — only protocol-tagged operational alerts are filterable.
+def _flarewatch_should_dispatch(message: Message) -> bool:
+    raw = os.environ.get("FLAREWATCH_PROTOCOLS_ACTIVE", "").strip()
+    if not raw:
+        return True
+    if message.protocol is None:
+        return True
+    active = {p.strip().lower() for p in raw.split(",") if p.strip()}
+    protocol_name = Protocol.id_to_name(message.protocol)
+    return protocol_name in active
+
+
+# FlareWatch 2026-05-13: TTL-based dedup cache for log_message dispatch.
+# The observer's outer loop occasionally double-dispatches the same alert
+# (same level/network/round/protocol/headline) from multiple call sites —
+# validation_msgs + event_messages + tx_messages can converge on overlapping
+# content during catch-up. This in-memory cache squashes the duplicate
+# without affecting alerts for distinct rounds or distinct content.
+#
+# Key: (level, network, round_id, protocol_id, headline_120). round_id is
+# IN the key, so different rounds DO fire separate alerts (a 5-round
+# streak still produces 5 alerts — desired). TTL is short (300s) so
+# transient state doesn't persist across long observer pauses.
+_LOG_MESSAGE_DEDUP_CACHE: dict[tuple, float] = {}
+_LOG_MESSAGE_DEDUP_TTL_SECONDS = 300
+
+
+def _log_message_dedup_key(message: Message) -> tuple:
+    return (
+        message.level,
+        message.network,
+        message.round.id if message.round is not None else None,
+        message.protocol,
+        # Headline only (first line, capped) — the body content can shift
+        # across catch-up scans even when alert semantics are the same.
+        (message.message.split("\n", 1)[0] if message.message else "")[:120],
+    )
+
+
+def _log_message_should_dedup(message: Message) -> bool:
+    import time as _time
+    now = _time.time()
+    # Evict stale entries opportunistically
+    stale = [k for k, ts in _LOG_MESSAGE_DEDUP_CACHE.items()
+             if now - ts > _LOG_MESSAGE_DEDUP_TTL_SECONDS]
+    for k in stale:
+        _LOG_MESSAGE_DEDUP_CACHE.pop(k, None)
+    key = _log_message_dedup_key(message)
+    if key in _LOG_MESSAGE_DEDUP_CACHE:
+        return True
+    _LOG_MESSAGE_DEDUP_CACHE[key] = now
+    return False
+
+
+# FlareWatch 2026-05-25: ongoing-issue coalescer. Sits BELOW the 5min
+# dedup cache (which catches same-round duplicates from multiple
+# call sites). This layer catches the same logical issue repeating
+# across DIFFERENT rounds — the pattern that flooded the operator
+# inbox during the 2026-05-24 XRP RPC fallback storm (one consensus-
+# miss alert per round per attestation_type, ~12 alerts per voting
+# cycle while GetBlock was quota-exhausted).
+#
+# Cadence per operator directive: first occurrence immediate;
+# subsequent occurrences within 1h window suppressed + counted;
+# next occurrence after window includes "+N suppressed in last 1h"
+# preamble in the message body. Operator silence on the suppressed
+# run is acceptable per feedback_rolling_subscription_reminders
+# (silence = aware + still working the cause).
+#
+# Key DROPS round.id — distinct rounds of the same logical issue
+# coalesce. The headline is captured INCLUDING the [data:<source>]
+# prefix so per-chain consensus misses coalesce per-chain (one
+# XRP-flood preamble, one DOGE-flood preamble) instead of fusing
+# all chains into one bucket.
+_COALESCE_CACHE: dict[tuple, dict] = {}  # key -> {first_at, last_at, count}
+_COALESCE_WINDOW_SECONDS = 3600
+
+
+def _coalesce_key(message: Message) -> tuple:
+    return (
+        message.level,
+        message.network,
+        message.protocol,
+        (message.message.split("\n", 1)[0] if message.message else "")[:120],
+    )
+
+
+def _coalesce_decision(message: Message) -> tuple[bool, int]:
+    """Returns (should_dispatch, suppressed_count_since_last_fire).
+
+    - First occurrence (no state OR window expired): dispatch=True,
+      suppressed_count = prior cycle's count (0 on first-ever).
+    - Within window: dispatch=False, suppressed_count incremented.
+    """
+    import time as _time
+    now = _time.time()
+    key = _coalesce_key(message)
+    state = _COALESCE_CACHE.get(key)
+    if state is None:
+        _COALESCE_CACHE[key] = {"first_at": now, "last_at": now, "count": 0}
+        return True, 0
+    if now - state["first_at"] > _COALESCE_WINDOW_SECONDS:
+        prior_count = state["count"]
+        _COALESCE_CACHE[key] = {"first_at": now, "last_at": now, "count": 0}
+        return True, prior_count
+    state["last_at"] = now
+    state["count"] += 1
+    return False, 0
+
+
+def _coalesce_apply_preamble(message: Message, suppressed: int) -> Message:
+    """Returns a new Message with the '+N suppressed' preamble injected.
+
+    The preamble lands at the TOP of the message body so Discord
+    embeds (which truncate at 4096 chars) keep it visible even if
+    later body sections are clipped.
+    """
+    if suppressed <= 0:
+        return message
+    window_min = _COALESCE_WINDOW_SECONDS // 60
+    preamble = (
+        f"[STILL ONGOING] +{suppressed} similar alert(s) suppressed in "
+        f"last ~{window_min} min; firing this update.\n\n"
+    )
+    import copy as _copy
+    new_msg = _copy.copy(message)
+    new_msg.message = preamble + message.message
+    return new_msg
+
+
 def log_message(config: Configuration, message: Message):
+    # Always log to stdout/journald (no dedup at the logger layer — operator
+    # may want full historical record on box). Dedup ONLY at the
+    # downstream notification dispatch.
     LOGGER.log(message.level.value, message.message)
 
     n = config.notification
     # TODO:(@janezicmatej) this should be done eariler in the message lifecycle
     message.network = config.chain_id
 
+    # FlareWatch S40: gate notifications by FLAREWATCH_PROTOCOLS_ACTIVE
+    if not _flarewatch_should_dispatch(message):
+        return
+
+    # FlareWatch 2026-05-13: dedup the SAME alert content within a 5-min
+    # window across all dispatch call sites.
+    if _log_message_should_dedup(message):
+        LOGGER.debug("log_message dedup'd; skipping notify for %s",
+                     _log_message_dedup_key(message))
+        return
+
+    # FlareWatch 2026-05-25: ongoing-issue coalesce. After the 5-min
+    # same-round dedup, collapse same-logical-issue alerts across
+    # different rounds within a 1h window. First occurrence fires;
+    # subsequent are suppressed + counted; next post-window fire
+    # includes "+N suppressed" preamble.
+    should_dispatch, suppressed = _coalesce_decision(message)
+    if not should_dispatch:
+        LOGGER.debug("log_message coalesced (window-suppressed); key=%s",
+                     _coalesce_key(message))
+        return
+    if suppressed > 0:
+        message = _coalesce_apply_preamble(message, suppressed)
+
     notify_discord(n.discord, message)
     notify_discord_embed(n.discord_embed, message)
     notify_slack(n.slack, message)
     notify_telegram(n.telegram, message)
     notify_generic(n.generic, message)
+
+    # FlareWatch: mirror this alert into the portal `posts` table (the
+    # operator-facing source of truth the Activity page renders from).
+    # Additive to the dispatch above and runs LAST — mirror_to_portal is
+    # best-effort and never raises, so a portal/DB problem cannot affect
+    # the Discord path. Inherits the 300s dedup gate above for free, so
+    # one row lands per state, not per polling cycle.
+    mirror_to_portal(config, message)
 
 
 async def cron(
@@ -435,7 +610,7 @@ async def observer_loop(config: Configuration) -> None:
     )
     spb = SigningPolicy.builder().for_epoch(reward_epoch.next)
 
-    block_production = await get_block_production(w)
+    block_production = await get_block_production(w, config.block_production_lookback)
     maximum_exponent = calculate_maximum_exponent(block_production, config)
 
     LOGGER.debug(
@@ -494,6 +669,37 @@ async def observer_loop(config: Configuration) -> None:
         f" | reward_epoch={reward_epoch.id}"
         f" | voting_epoch={voting_epoch.id}"
     )
+
+    # --- FlareWatch passive-mode gate (registered-but-not-yet-in-policy) ---
+    # A newly-launched validator is registered ~3.5 days before its first reward
+    # epoch; until then our identity is absent from the active signing policy and
+    # every by_identity_address[tia] lookup below would KeyError, crash
+    # observer_loop, and (restart:unless-stopped) crash-loop the container.
+    # Instead wait here, periodically reloading the signing policy for the latest
+    # reward epoch, until we appear. Metrics stay served; SGB (always in policy)
+    # never enters this loop.
+    while tia not in signing_policy.entity_mapper.by_identity_address:
+        metrics.REGISTERED_CURRENT_EPOCH.labels(identity_address=tia).set(0)
+        LOGGER.warning(
+            f"identity {tia} not in reward_epoch={reward_epoch.id} signing"
+            f" policy ({len(signing_policy.entity_mapper.by_identity_address)}"
+            f" entities) - passive (not yet participating); reloading in 300s"
+        )
+        time.sleep(300)
+        block = await w.eth.get_block("latest")
+        assert "timestamp" in block and "number" in block
+        reward_epoch = ref.from_timestamp(block["timestamp"])
+        voting_epoch = vef.from_timestamp(block["timestamp"])
+        metrics.VOTING_ROUND.set(voting_epoch.id)
+        metrics.REWARD_EPOCH.set(reward_epoch.id)
+        lower_block_id, end_block_id = await find_voter_registration_blocks(
+            w, block["number"], reward_epoch
+        )
+        signing_policy = await get_signing_policy_events(
+            w, config, reward_epoch, lower_block_id, end_block_id
+        )
+    metrics.REGISTERED_CURRENT_EPOCH.labels(identity_address=tia).set(1)
+    # --- end passive-mode gate ---
 
     cron_time = time.time()
 

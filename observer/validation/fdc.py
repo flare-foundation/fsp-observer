@@ -9,6 +9,17 @@ from py_flare_common.fsp.messaging.types import (
 )
 
 from .. import metrics
+from ..alert_text import (
+    FDC_FOUND_SUBMIT1,
+    FDC_NO_SUBMIT_SIGNATURES,
+    FDC_REVEAL_OFFENCE_NO_SIGS,
+    FDC_SIGNATURE_MISMATCH,
+    FDC_SUBMIT2_BITVOTE_LENGTH,
+    FDC_SUBMIT2_CONSENSUS_MISS,
+    FDC_SUBMIT2_MISSING_OR_OUT_OF_WINDOW,
+    GRACE_PERIOD_LATE_SIGNATURES,
+    build_alert,
+)
 from ..message import Message, MessageBuilder, MessageLevel
 from ..reward_epoch_manager import Entity
 from ..types import ProtocolMessageRelayed
@@ -29,6 +40,8 @@ def _check_type(f: ValidateFn[FdcSubmit1, FdcSubmit2, SubmitSignatures]):
 def check_submit_1(
     submit_1: WParsedPayload[FdcSubmit1] | None,
     message_builder: MessageBuilder,
+    entity: Entity,
+    round: VotingRound,
     extracted_round: "ExtractedEntityVotingRound[FdcSubmit1, FdcSubmit2, SubmitSignatures]",  # noqa: E501
     **_,
 ) -> Sequence[Message]:
@@ -40,7 +53,24 @@ def check_submit_1(
     # - submit1 exists -> error
 
     if submit_1 is not None or extracted_round.submit_1.late:
-        issues.append(mb.build(MessageLevel.ERROR, "found submit1 transaction"))
+        issues.append(
+            mb.build(
+                MessageLevel.ERROR,
+                build_alert(
+                    summary="found submit1 transaction (FDC does not use submit1)",
+                    diagnosis=FDC_FOUND_SUBMIT1["diagnosis"],
+                    evidence={
+                        "identity": entity.identity_address,
+                        "submit_addr": entity.submit_address,
+                        "voting_epoch": round.voting_epoch.id,
+                    },
+                    actions=FDC_FOUND_SUBMIT1["actions"],
+                ),
+            )
+        )
+        metrics.FDC_SUBMIT1_UNEXPECTED.labels(
+            identity_address=metrics.identity_address
+        ).inc()
 
     return issues
 
@@ -49,6 +79,7 @@ def check_submit_1(
 def check_submit_2(
     submit_2: WParsedPayload[FdcSubmit2] | None,
     message_builder: MessageBuilder,
+    entity: Entity,
     round: VotingRound,
     extracted_round: "ExtractedEntityVotingRound[FdcSubmit1, FdcSubmit2, SubmitSignatures]",  # noqa: E501
     **_,
@@ -113,7 +144,23 @@ def check_submit_2(
         message = "no submit2 transaction"
 
     if submit_2 is None:
-        issues.append(mb.build(level, message))
+        issues.append(
+            mb.build(
+                level,
+                build_alert(
+                    summary=message,
+                    diagnosis=FDC_SUBMIT2_MISSING_OR_OUT_OF_WINDOW["diagnosis"],
+                    evidence={
+                        "identity": entity.identity_address,
+                        "submit_addr": entity.submit_address,
+                        "voting_epoch": round.voting_epoch.id,
+                        "start_unix": round.voting_epoch.start_s,
+                        "n_requests": n_requests,
+                    },
+                    actions=FDC_SUBMIT2_MISSING_OR_OUT_OF_WINDOW["actions"],
+                ),
+            )
+        )
 
     if submit_2 is not None:
         bit_vector = submit_2.parsed_payload.payload.bit_vector
@@ -121,9 +168,25 @@ def check_submit_2(
             issues.append(
                 mb.build(
                     MessageLevel.ERROR,
-                    "submit2 bit vote length didn't match number of requests in round",
+                    build_alert(
+                        summary=(
+                            "submit2 bit vote length didn't match number of "
+                            "requests in round"
+                        ),
+                        diagnosis=FDC_SUBMIT2_BITVOTE_LENGTH["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "voting_epoch": round.voting_epoch.id,
+                            "bit_vector_length": len(bit_vector),
+                            "expected_length": len(sorted_requests),
+                        },
+                        actions=FDC_SUBMIT2_BITVOTE_LENGTH["actions"],
+                    ),
                 )
             )
+            metrics.FDC_SUBMIT2_BIT_VOTE_LENGTH_MISMATCH.labels(
+                identity_address=metrics.identity_address
+            ).inc()
         else:
             for i, (r, bit, cbit) in enumerate(
                 zip(sorted_requests, bit_vector, consensus_bitvote)
@@ -136,13 +199,57 @@ def check_submit_2(
                     issues.append(
                         mb.build(
                             MessageLevel.ERROR,
-                            "submit2 didn't confirm request that was part of consensus "
-                            f"{at.representation}/{si.representation} at index {idx}",
+                            build_alert(
+                                summary=(
+                                    # Lead with [data:<source>] so the chain
+                                    # being attested is unambiguous. The
+                                    # `network:songbird` prefix added by
+                                    # build_str() refers to the protocol
+                                    # network (where the FDC vote runs), NOT
+                                    # the source chain whose RPC actually
+                                    # caused the miss -- operators routinely
+                                    # misread the legacy header (see 2026-05-
+                                    # 24 XRP RPC fallback storm).
+                                    f"[data:{si.representation}] submit2 didn't confirm consensus request "
+                                    f"{at.representation}/{si.representation} "
+                                    f"at index {idx}"
+                                ),
+                                diagnosis=FDC_SUBMIT2_CONSENSUS_MISS["diagnosis"],
+                                evidence={
+                                    "identity": entity.identity_address,
+                                    "voting_epoch": round.voting_epoch.id,
+                                    "attestation_type": at.representation,
+                                    "source_id": si.representation,
+                                    "request_index": idx,
+                                },
+                                actions=FDC_SUBMIT2_CONSENSUS_MISS["actions"],
+                            ),
                         )
                     )
+                    metrics.FDC_SUBMIT2_CONSENSUS_MISS.labels(
+                        identity_address=metrics.identity_address,
+                        attestation_type=at.representation,
+                        source_id=si.representation,
+                    ).inc()
 
         if early or late:
-            issues.append(mb.build(level, message))
+            issues.append(
+                mb.build(
+                    level,
+                    build_alert(
+                        summary=message,
+                        diagnosis=FDC_SUBMIT2_MISSING_OR_OUT_OF_WINDOW["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "submit_addr": entity.submit_address,
+                            "voting_epoch": round.voting_epoch.id,
+                            "start_unix": round.voting_epoch.start_s,
+                            "n_requests": n_requests,
+                        },
+                        actions=FDC_SUBMIT2_MISSING_OR_OUT_OF_WINDOW["actions"],
+                    ),
+                )
+            )
 
     return issues
 
@@ -191,7 +298,21 @@ def check_submit_signatures(
     if submit_2 is None and submit_signatures is None:
         if not early:
             issues.append(
-                mb.build(MessageLevel.ERROR, "no submitSignatures transaction"),
+                mb.build(
+                    MessageLevel.ERROR,
+                    build_alert(
+                        summary="no submitSignatures transaction",
+                        diagnosis=FDC_NO_SUBMIT_SIGNATURES["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "submit_sigs_to": entity.submit_signatures_address,
+                            "signing_policy": entity.signing_policy_address,
+                            "voting_epoch": round.voting_epoch.id,
+                            "start_unix": round.voting_epoch.start_s,
+                        },
+                        actions=FDC_NO_SUBMIT_SIGNATURES["actions"],
+                    ),
+                ),
             )
         else:
             issues.append(mb.build(level, message))
@@ -227,13 +348,43 @@ def check_submit_signatures(
                 issues.append(
                     mb.build(
                         MessageLevel.CRITICAL,
-                        "no submitSignatures transaction, causing reveal offence",
+                        build_alert(
+                            summary=(
+                                "no submitSignatures transaction, "
+                                "causing reveal offence"
+                            ),
+                            diagnosis=FDC_REVEAL_OFFENCE_NO_SIGS["diagnosis"],
+                            evidence={
+                                "identity": entity.identity_address,
+                                "submit_sigs_to": entity.submit_signatures_address,
+                                "signing_policy": entity.signing_policy_address,
+                                "voting_epoch": round.voting_epoch.id,
+                                "submit2_dominated_consensus": True,
+                            },
+                            actions=FDC_REVEAL_OFFENCE_NO_SIGS["actions"],
+                        ),
                     ),
                 )
             else:
                 level = MessageLevel.CRITICAL
-                message += ", causing reveal offence"
-                issues.append(mb.build(level, message))
+                issues.append(
+                    mb.build(
+                        level,
+                        build_alert(
+                            summary=message + ", causing reveal offence",
+                            diagnosis=FDC_REVEAL_OFFENCE_NO_SIGS["diagnosis"],
+                            evidence={
+                                "identity": entity.identity_address,
+                                "submit_sigs_to": entity.submit_signatures_address,
+                                "signing_policy": entity.signing_policy_address,
+                                "voting_epoch": round.voting_epoch.id,
+                                "submit2_dominated_consensus": True,
+                                "had_early_submission": True,
+                            },
+                            actions=FDC_REVEAL_OFFENCE_NO_SIGS["actions"],
+                        ),
+                    )
+                )
 
     if submit_signatures is not None:
         deadline = max(
@@ -248,7 +399,24 @@ def check_submit_signatures(
             issues.append(
                 mb.build(
                     MessageLevel.WARNING,
-                    "no submitSignatures during grace period, causing loss of rewards",
+                    build_alert(
+                        summary=(
+                            "submitSignatures sent after grace period, "
+                            "causing loss of rewards"
+                        ),
+                        diagnosis=GRACE_PERIOD_LATE_SIGNATURES["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "submit_sigs_to": entity.submit_signatures_address,
+                            "voting_epoch": round.voting_epoch.id,
+                            "deadline_unix": deadline,
+                            "actual_tx_ts": submit_signatures.wtx_data.timestamp,
+                            "late_by_seconds": (
+                                submit_signatures.wtx_data.timestamp - deadline
+                            ),
+                        },
+                        actions=GRACE_PERIOD_LATE_SIGNATURES["actions"],
+                    ),
                 )
             )
 
@@ -270,7 +438,20 @@ def check_submit_signatures(
             issues.append(
                 mb.build(
                     MessageLevel.ERROR,
-                    "submitSignatures signature doesn't match finalization",
+                    build_alert(
+                        summary=(
+                            "submitSignatures signature doesn't match finalization"
+                        ),
+                        diagnosis=FDC_SIGNATURE_MISMATCH["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "expected_signer": entity.signing_policy_address,
+                            "recovered_signer": addr,
+                            "voting_epoch": round.voting_epoch.id,
+                            "start_unix": round.voting_epoch.start_s,
+                        },
+                        actions=FDC_SIGNATURE_MISMATCH["actions"],
+                    ),
                 ),
             )
 
