@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Sequence
 from typing import Self
 
@@ -5,6 +6,8 @@ from attrs import define, field, frozen
 from eth_typing import ChecksumAddress
 from py_flare_common.fsp.epoch.epoch import RewardEpoch
 from web3 import AsyncWeb3
+
+logger = logging.getLogger(__name__)
 
 from configuration.types import Configuration
 from observer import metrics
@@ -129,12 +132,16 @@ class SigningPolicyBuilder:
         | VoterRemoved
         | SigningPolicyInitialized,
     ) -> Self:
+        # Skip events from other reward epochs
+        rid = self.reward_epoch.id if self.reward_epoch else None
+        if rid is not None and hasattr(event, "reward_epoch_id"):
+            if event.reward_epoch_id != rid:
+                return self
+
         if isinstance(event, RandomAcquisitionStarted):
-            assert self.random_acquisation_started is None
             self.random_acquisation_started = event
 
         if isinstance(event, VotePowerBlockSelected):
-            assert self.vote_power_block_selected is None
             self.vote_power_block_selected = event
 
         if isinstance(event, VoterRegistered):
@@ -147,7 +154,6 @@ class SigningPolicyBuilder:
             self.voter_removed.append(event)
 
         if isinstance(event, SigningPolicyInitialized):
-            assert self.signing_policy_initialized is None
             self.signing_policy_initialized = event
 
         return self
@@ -186,28 +192,65 @@ class SigningPolicyBuilder:
         assert self.reward_epoch is not None
         rid = self.reward_epoch.id
 
-        assert self.random_acquisation_started is not None
-        assert self.random_acquisation_started.reward_epoch_id == rid
+        if self.random_acquisation_started is None:
+            logger.warning(
+                "RandomAcquisitionStarted event not found for reward_epoch=%d "
+                "(block range may not cover registration period)", rid,
+            )
 
-        assert self.vote_power_block_selected is not None
-        assert self.vote_power_block_selected.reward_epoch_id == rid
+        if self.vote_power_block_selected is None:
+            logger.warning(
+                "VotePowerBlockSelected event not found for reward_epoch=%d", rid,
+            )
 
-        assert self.signing_policy_initialized is not None
-        assert self.signing_policy_initialized.reward_epoch_id == rid
+        if self.signing_policy_initialized is None:
+            raise ValueError(
+                f"SigningPolicyInitialized event not found for reward_epoch={rid}"
+            )
 
-        assert len(self.voter_registered) == len(self.voter_registration_info)
+        logger.info(
+            "Building signing policy for reward_epoch=%d: "
+            "voter_registered=%d, voter_registration_info=%d, "
+            "voter_removed=%d, signing_policy_voters=%d",
+            rid,
+            len(self.voter_registered),
+            len(self.voter_registration_info),
+            len(self.voter_removed),
+            len(self.signing_policy_initialized.voters),
+        )
 
-        spa = {v.signing_policy_address: v.voter for v in self.voter_registered}
-        vres = {v.voter: v for v in self.voter_registered}
-        vries = {v.voter: v for v in self.voter_registration_info}
+        # Filter out removed voters
+        removed_voters = {v.voter for v in self.voter_removed}
+        active_registered = [v for v in self.voter_registered if v.voter not in removed_voters]
+        active_reg_info = [v for v in self.voter_registration_info if v.voter not in removed_voters]
+
+        spa = {v.signing_policy_address: v.voter for v in active_registered}
+        vres = {v.voter: v for v in active_registered}
+        vries = {v.voter: v for v in active_reg_info}
 
         entities: list[Entity] = []
         mapper = EntityMapper()
 
         for i, voter in enumerate(self.signing_policy_initialized.voters):
             weight = self.signing_policy_initialized.weights[i]
-            vre = vres[spa[voter]]
-            vrie = vries[spa[voter]]
+
+            voter_address = spa.get(voter)
+            if voter_address is None:
+                logger.warning(
+                    "Signing policy voter %s not found in voter registrations, skipping",
+                    voter,
+                )
+                continue
+
+            vre = vres.get(voter_address)
+            vrie = vries.get(voter_address)
+            if vre is None or vrie is None:
+                logger.warning(
+                    "Voter %s (signing policy address %s) missing registration data, skipping",
+                    voter_address,
+                    voter,
+                )
+                continue
 
             nodes = []
             for n, w in zip(vrie.node_ids, vrie.node_weights):
@@ -233,7 +276,7 @@ class SigningPolicyBuilder:
 
         return SigningPolicy(
             reward_epoch=self.reward_epoch,
-            vote_power_block=self.vote_power_block_selected.vote_power_block,
+            vote_power_block=self.vote_power_block_selected.vote_power_block if self.vote_power_block_selected else 0,
             start_voting_round=self.signing_policy_initialized.start_voting_round_id,
             threshold=self.signing_policy_initialized.threshold,
             seed=self.signing_policy_initialized.seed,

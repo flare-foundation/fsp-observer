@@ -166,7 +166,7 @@ async def get_block_production(w: AsyncWeb3) -> float:
     latest_block = await w.eth.get_block("latest")
     assert "timestamp" in latest_block
     assert "number" in latest_block
-    to_compare = min(1_000_000, int(latest_block["number"]) - 1)
+    to_compare = min(10_000, int(latest_block["number"]) - 1)
     comparison_block = await w.eth.get_block(int(latest_block["number"]) - to_compare)
     assert "timestamp" in comparison_block
     time_delta = latest_block["timestamp"] - comparison_block["timestamp"]
@@ -182,42 +182,74 @@ def calculate_maximum_exponent(block_production: float, config: Configuration) -
     return max_exponent
 
 
+async def _find_block_near_timestamp(
+    w: AsyncWeb3,
+    current_block_id: int,
+    target_ts: int,
+    current_ts: int,
+) -> int:
+    """Find a block close to target_ts. Falls back to earliest available block."""
+    avg_block_time = 1  # ~1 block/sec on Flare
+    diff = current_ts - target_ts
+    block_id = current_block_id - int(diff / avg_block_time)
+
+    if block_id < 1:
+        block_id = 1
+
+    try:
+        block = await w.eth.get_block(block_id)
+    except Exception:
+        # Block not available (pruned node), search forward for earliest available
+        LOGGER.warning(
+            "Block %d not available, searching for earliest available block",
+            block_id,
+        )
+        low, high = block_id, current_block_id
+        while low < high:
+            mid = (low + high) // 2
+            try:
+                await w.eth.get_block(mid)
+                high = mid
+            except Exception:
+                low = mid + 1
+        block_id = low
+        block = await w.eth.get_block(block_id)
+
+    assert "timestamp" in block
+    d = block["timestamp"] - target_ts
+    while abs(d) > 600:
+        step = 100 * (d // abs(d))
+        next_id = block_id - step
+        try:
+            block = await w.eth.get_block(next_id)
+        except Exception:
+            break  # hit pruning boundary, use current block_id
+        assert "timestamp" in block
+        block_id = next_id
+        d = block["timestamp"] - target_ts
+
+    return block_id
+
+
 async def find_voter_registration_blocks(
     w: AsyncWeb3,
     current_block_id: int,
     reward_epoch: RewardEpoch,
 ) -> tuple[int, int]:
-    # there are roughly 3600 blocks in an hour
-    avg_block_time = 3600 / 3600
     current_ts = int(time.time())
 
-    # find timestamp that is more than 2h30min (=9000s) before start_of_epoch_ts
-    target_start_ts = reward_epoch.start_s - 9000
-    start_diff = current_ts - target_start_ts
+    # voter registration period: scan from 12h before epoch start to epoch start
+    # original window (2h30min..1h before) was too narrow for some networks
+    target_start_ts = reward_epoch.start_s - 43200  # 12h before
+    start_block_id = await _find_block_near_timestamp(
+        w, current_block_id, target_start_ts, current_ts
+    )
 
-    start_block_id = current_block_id - int(start_diff / avg_block_time)
-    block = await w.eth.get_block(start_block_id)
-    assert "timestamp" in block
-    d = block["timestamp"] - target_start_ts
-    while abs(d) > 600:
-        start_block_id -= 100 * (d // abs(d))
-        block = await w.eth.get_block(start_block_id)
-        assert "timestamp" in block
-        d = block["timestamp"] - target_start_ts
-
-    # end timestamp is 1h (=3600s) before start_of_epoch_ts
-    target_end_ts = reward_epoch.start_s - 3600
-    end_diff = current_ts - target_end_ts
-    end_block_id = current_block_id - int(end_diff / avg_block_time)
-
-    block = await w.eth.get_block(end_block_id)
-    assert "timestamp" in block
-    d = block["timestamp"] - target_end_ts
-    while abs(d) > 600:
-        end_block_id -= 100 * (d // abs(d))
-        block = await w.eth.get_block(end_block_id)
-        assert "timestamp" in block
-        d = block["timestamp"] - target_end_ts
+    # end at epoch start (not 1h before, to catch late registrations)
+    target_end_ts = reward_epoch.start_s
+    end_block_id = await _find_block_near_timestamp(
+        w, current_block_id, target_end_ts, current_ts
+    )
 
     return (start_block_id, end_block_id)
 
@@ -311,7 +343,8 @@ async def get_signing_policy_events(
         builder.add(e)
 
         # signing policy initialized is the last event that gets emitted
-        if event.name == "SigningPolicyInitialized":
+        # only break if this was actually accepted (correct reward epoch)
+        if event.name == "SigningPolicyInitialized" and builder.signing_policy_initialized is not None:
             break
 
     return builder.build()
@@ -420,6 +453,9 @@ async def observer_loop(config: Configuration) -> None:
     )
 
     # get informations for events that build the current signing policy
+    LOGGER.info(
+        f"Scanning blocks {lower_block_id}..{end_block_id} for signing policy events"
+    )
     signing_policy = await get_signing_policy_events(
         w,
         config,
@@ -522,9 +558,14 @@ async def observer_loop(config: Configuration) -> None:
     contracts = cm.get_contracts_list()
     event_signatures = cm.get_events()
 
-    entity = signing_policy.entity_mapper.by_identity_address[tia]
+    entity = signing_policy.entity_mapper.by_identity_address.get(tia)
+    if entity is None:
+        LOGGER.warning(
+            "Entity %s not in signing policy, using identity address as fallback signing policy address",
+            tia,
+        )
     fum = FastUpdatesManager(
-        block_number, FastUpdate(reward_epoch.id, entity.signing_policy_address, [])
+        block_number, FastUpdate(reward_epoch.id, entity.signing_policy_address if entity else tia, [])
     )
     spm = SigningPolicyManager(signing_policy, signing_policy)
     rm = RewardManager()
@@ -634,10 +675,11 @@ async def observer_loop(config: Configuration) -> None:
 
                 minimal_conditions.reward_epoch_id = signing_policy.reward_epoch.id
 
-                entity = signing_policy.entity_mapper.by_identity_address[tia]
-                unclaimed_rewards = await rm.get_unclaimed_rewards(entity, config, w)
-                for m in unclaimed_rewards:
-                    log_message(config, m)
+                entity = signing_policy.entity_mapper.by_identity_address.get(tia)
+                if entity is not None:
+                    unclaimed_rewards = await rm.get_unclaimed_rewards(entity, config, w)
+                    for m in unclaimed_rewards:
+                        log_message(config, m)
 
             block_logs = await w.eth.get_logs(
                 {
@@ -695,17 +737,15 @@ async def observer_loop(config: Configuration) -> None:
 
                             # this had to be sent to Relay
                             # so we can check if the Relay address changed
-                            entity = signing_policy.entity_mapper.by_identity_address[
-                                tia
-                            ]
-                            tx = await w.eth.get_transaction(data["transactionHash"])
-                            assert "to" in tx
-                            assert "from" in tx
-                            if tx["from"] == entity.identity_address:
-                                relay_address = tx["to"]
-                                event_messages.extend(
-                                    cm.check_relay_address(relay_address)
-                                )
+                            if entity is not None:
+                                tx = await w.eth.get_transaction(data["transactionHash"])
+                                assert "to" in tx
+                                assert "from" in tx
+                                if tx["from"] == entity.identity_address:
+                                    relay_address = tx["to"]
+                                    event_messages.extend(
+                                        cm.check_relay_address(relay_address)
+                                    )
 
                         case "AttestationRequest":
                             e = AttestationRequest.from_dict(data, voting_epoch)
@@ -725,11 +765,11 @@ async def observer_loop(config: Configuration) -> None:
                             spb.add(e)
                             if registered:
                                 continue
-                            entity = signing_policy.entity_mapper.by_identity_address[
+                            _entity = signing_policy.entity_mapper.by_identity_address.get(
                                 tia
-                            ]
-                            if (
-                                entity.signing_policy_address
+                            )
+                            if _entity is not None and (
+                                _entity.signing_policy_address
                                 == e.signing_policy_address
                             ):
                                 registered = True
@@ -768,10 +808,7 @@ async def observer_loop(config: Configuration) -> None:
                             spa, address, update_array = calculate_update_from_tx(
                                 config, w, tx
                             )
-                            entity = signing_policy.entity_mapper.by_identity_address[
-                                tia
-                            ]
-                            if un_prefix_0x(entity.signing_policy_address) == spa:
+                            if entity is not None and un_prefix_0x(entity.signing_policy_address) == spa:
                                 fum.last_update = FastUpdate(
                                     signing_policy.reward_epoch.id,
                                     address,
@@ -798,9 +835,6 @@ async def observer_loop(config: Configuration) -> None:
                             )
                         case "VoterPreRegistered":
                             e = VoterPreRegistered.from_dict(data)
-                            entity = signing_policy.entity_mapper.by_identity_address[
-                                tia
-                            ]
                             if tia == e.voter:
                                 registered = True
                                 metrics.REGISTERED_NEXT_EPOCH.labels(
@@ -817,11 +851,11 @@ async def observer_loop(config: Configuration) -> None:
                 entity = signing_policy.entity_mapper.by_omni.get(sender_address)
                 if entity is None:
                     continue
-                target_entity = signing_policy.entity_mapper.by_identity_address[tia]
+                target_entity = signing_policy.entity_mapper.by_identity_address.get(tia)
 
                 if called_function_sig in target_function_signatures:
                     # check if the Submission address is correct
-                    if entity == target_entity:
+                    if target_entity is not None and entity == target_entity:
                         tx_messages.extend(cm.check_submission_address(wtx.to_address))
                     mode = target_function_signatures[called_function_sig]
                     match mode:
@@ -916,10 +950,10 @@ async def observer_loop(config: Configuration) -> None:
             messages.clear()
             messages.extend(tx_messages)
             messages.extend(event_messages)
-            entity = signing_policy.entity_mapper.by_identity_address[tia]
+            entity = signing_policy.entity_mapper.by_identity_address.get(tia)
 
             # perform all minimal condition checks here
-            if int(time.time() - last_minimal_conditions_check) > 60:
+            if entity is not None and int(time.time() - last_minimal_conditions_check) > 60:
                 metrics.FAST_UPDATE_BLOCKS_SINCE_LAST.labels(
                     identity_address=metrics.identity_address
                 ).set(block - fum.last_update_block)
@@ -955,7 +989,7 @@ async def observer_loop(config: Configuration) -> None:
 
             node_ids = [
                 node_id_to_representation(node.node_id) for node in entity.nodes
-            ]
+            ] if entity else []
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -995,51 +1029,52 @@ async def observer_loop(config: Configuration) -> None:
 
             if int(time.time()) - cron_time > 60 * 60:
                 cron_time = int(time.time())
-                check_functions = [
-                    entity.check_addresses(config, w),
-                    fum.check_addresses(config, w),
-                ]
+                check_functions = [fum.check_addresses(config, w)]
+                if entity is not None:
+                    check_functions.insert(0, entity.check_addresses(config, w))
                 messages.extend(await cron(check_functions))
 
             rounds = vrm.finalize(block_data)
             # prepare new data for anchor feeds
             if len(rounds) > 0:
                 medians.extend([round.ftso.medians for round in rounds])
-                for round in rounds:
-                    extracted_ftso = extract_round_for_entity(
-                        round.ftso, entity, round.voting_epoch
-                    ).submit_2.extracted
-                    if extracted_ftso is not None:
-                        votes = extracted_ftso.parsed_payload.payload.values
-                        entity_votes.append(votes)
+                if entity is not None:
+                    for round in rounds:
+                        extracted_ftso = extract_round_for_entity(
+                            round.ftso, entity, round.voting_epoch
+                        ).submit_2.extracted
+                        if extracted_ftso is not None:
+                            votes = extracted_ftso.parsed_payload.payload.values
+                            entity_votes.append(votes)
+                        else:
+                            entity_votes.append([])
+            if entity is not None:
+                for r in rounds:
+                    ftso_fin = "YES" if r.ftso.finalization else "NO"
+                    fdc_fin = "YES" if r.fdc.finalization else "NO"
+                    nb_medians = len(r.ftso.medians) if r.ftso.medians else 0
+                    validation_msgs = validate_round(r, signing_policy, entity, config)
+                    if validation_msgs:
+                        LOGGER.warning(
+                            f"Round {r.voting_epoch.id}:"
+                            f" {len(validation_msgs)} issue(s)"
+                            f" | FTSO={ftso_fin} FDC={fdc_fin}"
+                        )
                     else:
-                        entity_votes.append([])
-            for r in rounds:
-                ftso_fin = "YES" if r.ftso.finalization else "NO"
-                fdc_fin = "YES" if r.fdc.finalization else "NO"
-                nb_medians = len(r.ftso.medians) if r.ftso.medians else 0
-                validation_msgs = validate_round(r, signing_policy, entity, config)
-                if validation_msgs:
-                    LOGGER.warning(
-                        f"Round {r.voting_epoch.id}:"
-                        f" {len(validation_msgs)} issue(s)"
-                        f" | FTSO={ftso_fin} FDC={fdc_fin}"
+                        LOGGER.info(
+                            f"Round {r.voting_epoch.id}: OK"
+                            f" | FTSO={ftso_fin} FDC={fdc_fin}"
+                            f" medians={nb_medians}"
+                        )
+                    messages.extend(validation_msgs)
+                    _record_submit_metrics(
+                        "ftso", extract_round_for_entity(r.ftso, entity, r.voting_epoch)
                     )
-                else:
-                    LOGGER.info(
-                        f"Round {r.voting_epoch.id}: OK"
-                        f" | FTSO={ftso_fin} FDC={fdc_fin}"
-                        f" medians={nb_medians}"
+                    _record_submit_metrics(
+                        "fdc",
+                        extract_round_for_entity(r.fdc, entity, r.voting_epoch),
+                        include_submit1=False,
                     )
-                messages.extend(validation_msgs)
-                _record_submit_metrics(
-                    "ftso", extract_round_for_entity(r.ftso, entity, r.voting_epoch)
-                )
-                _record_submit_metrics(
-                    "fdc",
-                    extract_round_for_entity(r.fdc, entity, r.voting_epoch),
-                    include_submit1=False,
-                )
 
             # prepare new data for FDC participation
             signatures.extend([round.submitted_signatures for round in rounds])
