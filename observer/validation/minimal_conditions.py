@@ -34,6 +34,10 @@ class MinimalConditions:
 
     network: int | None = None
 
+    # max false positive probability (in %) at which a missed fast update is escalated
+    # to a critical issue; 100% escalates on any false positive
+    false_positive_threshold: float = 100
+
     def for_network(self, network: int) -> Self:
         self.network = network
         return self
@@ -44,6 +48,10 @@ class MinimalConditions:
 
     def set_time_interval(self, interval: Interval) -> Self:
         self.time_period = interval
+        return self
+
+    def set_false_positive_threshold(self, threshold: float) -> Self:
+        self.false_positive_threshold = threshold
         return self
 
     def calculate_ftso_anchor_feeds(
@@ -120,11 +128,9 @@ class MinimalConditions:
         n_blocks = current_block - last_update
         if n_blocks >= max_exponent:
             n_blocks = max_exponent
-        probability_ppb = int(
-            1_000_000_000 * (1 - per_block * weight / total_weight) ** (n_blocks)
-        )
+        probability_pct = 100 * (1 - per_block * weight / total_weight) ** (n_blocks)
         if n_blocks < max_exponent:
-            if probability_ppb <= 100:
+            if probability_pct <= self.false_positive_threshold:
                 level = MessageLevel.CRITICAL
                 messages.append(
                     mb.build(
@@ -135,14 +141,14 @@ class MinimalConditions:
             return messages
 
         level = MessageLevel.WARNING
-        if probability_ppb <= 100:
+        if probability_pct <= self.false_positive_threshold:
             level = MessageLevel.CRITICAL
 
         messages.append(
             mb.build(
                 level,
                 f"didn't submit a fast update in {n_blocks} blocks "
-                f"(false positive probability: {probability_ppb / 10_000_000:.5f})%",
+                f"(false positive probability: {probability_pct:.5f})%",
             )
         )
 

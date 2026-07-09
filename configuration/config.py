@@ -171,6 +171,10 @@ def get_config() -> Configuration:
     # ranged log queries to stay within this limit
     max_block_range = int(os.environ.get("MAX_BLOCK_RANGE", "1000"))
 
+    # max false positive probability (in %) at which a missed fast update is reported as
+    # a critical issue; defaults to 100% so any false positive is reported
+    false_positive_threshold = float(os.environ.get("FALSE_POSITIVE_THRESHOLD", "100"))
+
     config = Configuration(
         rpc_url=rpc_url,
         p_chain_rpc_url=p_chain_rpc_url,
@@ -183,6 +187,7 @@ def get_config() -> Configuration:
         metrics=get_metrics_config(),
         log_level=log_level,
         max_block_range=max_block_range,
+        false_positive_threshold=false_positive_threshold,
     )
 
     return config

@@ -66,6 +66,7 @@ RPC_BASE_URL="https://flare-api.flare.network" \
 | `METRICS_ADDRESS` | no | `0.0.0.0` | Prometheus metrics server bind address |
 | `LOG_LEVEL` | no | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `MAX_BLOCK_RANGE` | no | `1000` | Max number of blocks per `get_logs` request (lower it if the RPC caps the block range) |
+| `FALSE_POSITIVE_THRESHOLD` | no | `100` | Max false positive probability (in %) to report a missed fast update as critical; `100` reports on any false positive |
 
 ## Prometheus metrics
 

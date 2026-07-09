@@ -586,6 +586,7 @@ async def observer_loop(config: Configuration) -> None:
         MinimalConditions()
         .for_network(config.chain_id)
         .for_reward_epoch(reward_epoch.id)
+        .set_false_positive_threshold(config.false_positive_threshold)
     )
     last_minimal_conditions_check = int(time.time())
     last_ping = int(time.time())
