@@ -273,6 +273,7 @@ class Notification:
     discord: NotificationDiscord
     discord_embed: NotificationDiscord
     slack: NotificationSlack
+    slack_embed: NotificationSlack
     telegram: NotificationTelegram
     generic: NotificationGeneric
 

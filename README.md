@@ -58,6 +58,7 @@ RPC_BASE_URL="https://flare-api.flare.network" \
 | `NOTIFICATION_DISCORD_WEBHOOK` | no | - | Discord webhook URL (comma-separated for multiple) |
 | `NOTIFICATION_DISCORD_EMBED_WEBHOOK` | no | - | Discord embed webhook URL |
 | `NOTIFICATION_SLACK_WEBHOOK` | no | - | Slack webhook URL |
+| `NOTIFICATION_SLACK_EMBED_WEBHOOK` | no | - | Slack embed webhook URL |
 | `NOTIFICATION_TELEGRAM_BOT_TOKEN` | no | - | Telegram bot token (comma-separated for multiple) |
 | `NOTIFICATION_TELEGRAM_CHAT_ID` | no | - | Telegram chat ID (comma-separated, paired with bot tokens) |
 | `NOTIFICATION_GENERIC_WEBHOOK` | no | - | Generic HTTP POST webhook URL |

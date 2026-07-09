@@ -121,6 +121,50 @@ def notify_slack(config: NotificationSlack, message: Message) -> None:
         )
 
 
+def notify_slack_embed(config: NotificationSlack, message: Message) -> None:
+    color = LEVEL_COLORS[message.level]
+
+    fields = []
+    if message.protocol is not None:
+        fields.append(
+            {
+                "title": "Protocol",
+                "value": Protocol.id_to_name(message.protocol).upper(),
+                "short": True,
+            }
+        )
+
+    if message.round is not None:
+        fields.append(
+            {
+                "title": "Round",
+                "value": str(message.round.id),
+                "short": True,
+            }
+        )
+
+    attachment = {
+        "color": f"#{color:06X}",
+        "author_name": f"fsp-observer @ {ChainId.id_to_name(message.network)}",
+        "author_link": "https://github.com/flare-foundation/fsp-observer",
+        "title": f"{message.level.name.title()}",
+        "text": f"{message.message}",
+        "fields": fields,
+        "footer": "Flare Network",
+        "footer_icon": get_icon_url(ChainId.FLARE),
+        "thumb_url": get_icon_url(message.network),
+        "ts": int(datetime.now(UTC).timestamp()),
+    }
+
+    for u in config.webhook_url:
+        notify(
+            u,
+            "POST",
+            headers={"Content-Type": "application/json"},
+            json={"attachments": [attachment]},
+        )
+
+
 def notify_telegram(config: NotificationTelegram, message: Message) -> None:
     for t in config.bot:
         notify(

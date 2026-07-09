@@ -62,6 +62,7 @@ from .notification import (
     notify_discord_embed,
     notify_generic,
     notify_slack,
+    notify_slack_embed,
     notify_telegram,
 )
 from .voting_round import (
@@ -370,6 +371,7 @@ def log_message(config: Configuration, message: Message):
     notify_discord(n.discord, message)
     notify_discord_embed(n.discord_embed, message)
     notify_slack(n.slack, message)
+    notify_slack_embed(n.slack_embed, message)
     notify_telegram(n.telegram, message)
     notify_generic(n.generic, message)
 
