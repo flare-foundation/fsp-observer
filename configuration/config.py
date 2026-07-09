@@ -167,6 +167,10 @@ def get_config() -> Configuration:
 
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 
+    # some rpc providers cap the number of blocks per get_logs request, so we chunk
+    # ranged log queries to stay within this limit
+    max_block_range = int(os.environ.get("MAX_BLOCK_RANGE", "1000"))
+
     config = Configuration(
         rpc_url=rpc_url,
         p_chain_rpc_url=p_chain_rpc_url,
@@ -178,6 +182,7 @@ def get_config() -> Configuration:
         fee_threshold=fee_threshold,
         metrics=get_metrics_config(),
         log_level=log_level,
+        max_block_range=max_block_range,
     )
 
     return config

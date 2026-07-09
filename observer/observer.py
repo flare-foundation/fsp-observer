@@ -222,6 +222,28 @@ async def find_voter_registration_blocks(
     return (start_block_id, end_block_id)
 
 
+async def get_logs_chunked(
+    w: AsyncWeb3,
+    params: dict[str, Any],
+    start_block: int,
+    end_block: int,
+    max_block_range: int,
+) -> list:
+    # some rpc providers cap the number of blocks per get_logs request, so we split
+    # the range into chunks of at most max_block_range blocks
+    logs = []
+    chunk_start = start_block
+    while chunk_start <= end_block:
+        chunk_end = min(chunk_start + max_block_range - 1, end_block)
+        logs.extend(
+            await w.eth.get_logs(
+                {**params, "fromBlock": chunk_start, "toBlock": chunk_end}
+            )
+        )
+        chunk_start = chunk_end + 1
+    return logs
+
+
 async def get_signing_policy_events(
     w: AsyncWeb3,
     config: Configuration,
@@ -258,15 +280,16 @@ async def get_signing_policy_events(
         if e.name in event_names
     }
 
-    block_logs = await w.eth.get_logs(
-        {
-            "address": [contract.address for contract in contracts],
-            "fromBlock": start_block,
-            "toBlock": end_block,
-        }
+    block_logs = await get_logs_chunked(
+        w,
+        {"address": [contract.address for contract in contracts]},
+        start_block,
+        end_block,
+        config.max_block_range,
     )
 
-    _relay_patch_sps = await w.eth.get_logs(
+    _relay_patch_sps = await get_logs_chunked(
+        w,
         {
             "address": [
                 to_checksum_address("0x92a6E1127262106611e1e129BB64B6D8654273F7"),
@@ -274,13 +297,14 @@ async def get_signing_policy_events(
                 to_checksum_address("0x57a4c3676d08Aa5d15410b5A6A80fBcEF72f3F45"),
                 to_checksum_address("0x67a916E175a2aF01369294739AA60dDdE1Fad189"),
             ],
-            "fromBlock": start_block,
-            "toBlock": end_block,
             "topics": [
                 "0x"
                 + config.contracts.Relay.events["SigningPolicyInitialized"].signature
             ],
-        }
+        },
+        start_block,
+        end_block,
+        config.max_block_range,
     )
     block_logs.extend(_relay_patch_sps)
 

@@ -34,6 +34,7 @@ docker run \
     -e METRICS_ENABLED="true" \
     -e METRICS_PORT="8000" \
     -e LOG_LEVEL="INFO" \
+    -e MAX_BLOCK_RANGE="1000" \
     ghcr.io/flare-foundation/fsp-observer:main
 ```
 
@@ -64,6 +65,7 @@ RPC_BASE_URL="https://flare-api.flare.network" \
 | `METRICS_PORT` | no | `8000` | Prometheus metrics server port |
 | `METRICS_ADDRESS` | no | `0.0.0.0` | Prometheus metrics server bind address |
 | `LOG_LEVEL` | no | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `MAX_BLOCK_RANGE` | no | `1000` | Max number of blocks per `get_logs` request (lower it if the RPC caps the block range) |
 
 ## Prometheus metrics
 
