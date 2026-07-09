@@ -177,9 +177,15 @@ def get_config() -> Configuration:
     # ranged log queries to stay within this limit
     max_block_range = int(os.environ.get("MAX_BLOCK_RANGE", "1000"))
 
-    # max false positive probability (in %) at which a missed fast update is reported as
-    # a critical issue; defaults to 100% so any false positive is reported
-    false_positive_threshold = float(os.environ.get("FALSE_POSITIVE_THRESHOLD", "100"))
+    # optionally suppress fast update miss notifications whose false positive
+    # probability (in %) is above this; unset = no suppression (mainly affects
+    # low weight entities, whose probability stays high longer)
+    _false_positive_threshold = os.environ.get("FALSE_POSITIVE_THRESHOLD")
+    false_positive_threshold = (
+        float(_false_positive_threshold)
+        if _false_positive_threshold is not None
+        else None
+    )
 
     config = Configuration(
         rpc_url=rpc_url,

@@ -34,9 +34,9 @@ class MinimalConditions:
 
     network: int | None = None
 
-    # max false positive probability (in %) at which a missed fast update is escalated
-    # to a critical issue; 100% escalates on any false positive
-    false_positive_threshold: float = 100
+    # optional: fast update miss notifications with a false positive probability (in %)
+    # above this are suppressed; None means no suppression (default, original behavior)
+    false_positive_threshold: float | None = None
 
     def for_network(self, network: int) -> Self:
         self.network = network
@@ -50,7 +50,7 @@ class MinimalConditions:
         self.time_period = interval
         return self
 
-    def set_false_positive_threshold(self, threshold: float) -> Self:
+    def set_false_positive_threshold(self, threshold: float | None) -> Self:
         self.false_positive_threshold = threshold
         return self
 
@@ -129,18 +129,42 @@ class MinimalConditions:
         if n_blocks >= max_exponent:
             n_blocks = max_exponent
 
-        # chance that missing this many blocks is just bad luck rather than a real miss;
-        # the more blocks missed, the lower the chance, so we report once it drops below
-        # the configured threshold
+        # probability that missing this many blocks is just bad luck rather than a real
+        # miss (a false positive); it drops as more blocks are missed
         probability_pct = 100 * (1 - per_block * weight / total_weight) ** (n_blocks)
-        if probability_pct < self.false_positive_threshold:
+
+        # below the exponent cap only report when we are near certain it is a real miss
+        # (<= 0.00001%), otherwise stay silent; once the cap is reached always report,
+        # escalating from warning to critical at the same confidence
+        if n_blocks < max_exponent:
+            if probability_pct <= 0.00001:
+                messages.append(
+                    mb.build(
+                        MessageLevel.CRITICAL,
+                        f"didn't submit a fast update in {n_blocks} blocks",
+                    )
+                )
+        else:
+            level = MessageLevel.WARNING
+            if probability_pct <= 0.00001:
+                level = MessageLevel.CRITICAL
             messages.append(
                 mb.build(
-                    MessageLevel.CRITICAL,
+                    level,
                     f"didn't submit a fast update in {n_blocks} blocks "
                     f"(false positive probability: {probability_pct:.5f}%)",
                 )
             )
+
+        # additional operator-configurable suppression on top of the above: when set,
+        # drop the notification if its false positive probability is above the
+        # threshold; this mainly quiets low weight entities, whose probability stays
+        # high longer
+        if (
+            self.false_positive_threshold is not None
+            and probability_pct > self.false_positive_threshold
+        ):
+            return []
 
         return messages
 
