@@ -276,7 +276,7 @@ async def get_signing_policy_events(
     event_signatures = {
         e.signature: e
         for c in contracts
-        for e in c.events.values()
+        for e in c.events_by_signature.values()
         if e.name in event_names
     }
 
