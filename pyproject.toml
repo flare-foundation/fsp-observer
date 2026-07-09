@@ -1,6 +1,6 @@
 [project]
 name = "fsp-observer"
-version = "0.2.1"
+version = "0.3.0"
 requires-python = ">=3.14"
 dependencies = [
     "requests==2.34.2",
