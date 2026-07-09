@@ -146,7 +146,7 @@ class VotingRoundProtocol[S1, S2, SS]:
 class FtsoVotingRoundProtocol(
     VotingRoundProtocol[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]
 ):
-    medians: list[FtsoMedian] = field(factory=list)
+    medians: list[FtsoMedian | None] = field(factory=list)
 
     def calculate_medians(
         self,
@@ -213,8 +213,10 @@ class FtsoVotingRoundProtocol(
 
             ftso_votes.sort(key=lambda x: x.value)
 
+            # a feed can have no (non-empty) votes in a round, e.g. one that no provider
+            # submits a value for; there is no consensus median then, keep the slot as
+            # None so median indices stay aligned with feed indices for the consumers
             median = calculate_median(ftso_votes)
-            assert median is not None
 
             self.medians.append(median)
 

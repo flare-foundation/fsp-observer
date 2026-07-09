@@ -600,7 +600,7 @@ async def observer_loop(config: Configuration) -> None:
     )
     uptime_validations = 0
 
-    medians: deque[list[FtsoMedian]] = deque(
+    medians: deque[list[FtsoMedian | None]] = deque(
         maxlen=minimal_conditions.time_period.value // 90
     )
     entity_votes: deque[list[int | None]] = deque(

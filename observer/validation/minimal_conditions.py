@@ -47,7 +47,7 @@ class MinimalConditions:
         return self
 
     def calculate_ftso_anchor_feeds(
-        self, medians: deque[list[FtsoMedian]], votes: deque[list[int | None]]
+        self, medians: deque[list[FtsoMedian | None]], votes: deque[list[int | None]]
     ) -> Sequence[Message]:
         mb = Message.builder().add(network=self.network, protocol=Protocol.FTSO)
         messages = []
@@ -62,6 +62,11 @@ class MinimalConditions:
                     continue
 
                 median = median_list[i]
+
+                # feed had no consensus median this round, nothing to compare against
+                if median is None:
+                    continue
+
                 vote = vote_list[i]
 
                 assert vote is not None

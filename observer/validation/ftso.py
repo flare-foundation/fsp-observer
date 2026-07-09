@@ -179,6 +179,10 @@ def check_submit_2(
                     none_indices.append(str(i))
                     continue
 
+                # no consensus median for this feed, nothing to compare against
+                if m is None:
+                    continue
+
                 # as per https://proposals.flare.network/FIP/FIP_10.html
                 mcb_low = m.value * 0.995
                 mcb_high = m.value * 1.005
