@@ -117,7 +117,9 @@ def get_notification_config() -> Notification:
     if telegram_bot_token is not None and telegram_chat_id is not None:
         bot_tokens = telegram_bot_token.split(",")
         chat_ids = telegram_chat_id.split(",")
-        telegram = [TelegramBot(t, c) for t, c in zip(bot_tokens, chat_ids)]
+        telegram = [
+            TelegramBot(t, c) for t, c in zip(bot_tokens, chat_ids, strict=False)
+        ]
 
     generic_webhook = os.environ.get("NOTIFICATION_GENERIC_WEBHOOK")
     generic = []

@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import requests
@@ -90,7 +90,7 @@ def notify_discord_embed(config: NotificationDiscord, message: Message) -> None:
         "description": f"{message.message}",
         "color": color,
         "fields": fields,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "footer": {
             "text": "Flare Network",
             "icon_url": get_icon_url(ChainId.FLARE),

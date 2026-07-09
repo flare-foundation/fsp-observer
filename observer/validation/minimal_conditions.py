@@ -54,7 +54,7 @@ class MinimalConditions:
 
         total, total_hit = 0, 0
 
-        for median_list, vote_list in zip(medians, votes):
+        for median_list, vote_list in zip(medians, votes, strict=False):
             for i in range(len(median_list)):
                 total += 1
 

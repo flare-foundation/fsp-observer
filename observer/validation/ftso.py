@@ -31,7 +31,9 @@ def _check_type(f: ValidateFn[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]):
 def check_submit_1(
     submit_1: WParsedPayload[FtsoSubmit1] | None,
     message_builder: MessageBuilder,
-    extracted_round: "ExtractedEntityVotingRound[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]",  # noqa: E501
+    extracted_round: ExtractedEntityVotingRound[
+        FtsoSubmit1, FtsoSubmit2, SubmitSignatures
+    ],
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -79,7 +81,9 @@ def check_submit_2(
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
-    extracted_round: "ExtractedEntityVotingRound[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]",  # noqa: E501
+    extracted_round: ExtractedEntityVotingRound[
+        FtsoSubmit1, FtsoSubmit2, SubmitSignatures
+    ],
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -170,7 +174,7 @@ def check_submit_2(
             none_indices = []
             minimal_condition_indices = []
 
-            for i, (v, m) in enumerate(zip(values, medians)):
+            for i, (v, m) in enumerate(zip(values, medians, strict=False)):
                 if v is None:
                     none_indices.append(str(i))
                     continue
@@ -214,7 +218,9 @@ def check_submit_signatures(
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
-    extracted_round: "ExtractedEntityVotingRound[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]",  # noqa: E501
+    extracted_round: ExtractedEntityVotingRound[
+        FtsoSubmit1, FtsoSubmit2, SubmitSignatures
+    ],
     **_,
 ) -> Sequence[Message]:
     issues = []

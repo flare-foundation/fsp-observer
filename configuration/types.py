@@ -1,6 +1,7 @@
 import json
 import re
-from typing import Callable, Self
+from collections.abc import Callable
+from typing import Self
 
 from attrs import field, frozen
 from eth_typing import ABI, ABIEvent, ABIFunction, ChecksumAddress
@@ -86,7 +87,7 @@ def full_type_from_param(param) -> str:
 class Event:
     name: str
     abi: ABIEvent
-    contract: "Contract"
+    contract: Contract
     signature: str = field(init=False)
 
     def __str__(self) -> str:
@@ -103,7 +104,7 @@ class Event:
 class Function:
     name: str
     abi: ABIFunction
-    contract: "Contract"
+    contract: Contract
     signature: str = field(init=False)
 
     def to_full_name(self):

@@ -29,7 +29,9 @@ def _check_type(f: ValidateFn[FdcSubmit1, FdcSubmit2, SubmitSignatures]):
 def check_submit_1(
     submit_1: WParsedPayload[FdcSubmit1] | None,
     message_builder: MessageBuilder,
-    extracted_round: "ExtractedEntityVotingRound[FdcSubmit1, FdcSubmit2, SubmitSignatures]",  # noqa: E501
+    extracted_round: ExtractedEntityVotingRound[
+        FdcSubmit1, FdcSubmit2, SubmitSignatures
+    ],
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -50,7 +52,9 @@ def check_submit_2(
     submit_2: WParsedPayload[FdcSubmit2] | None,
     message_builder: MessageBuilder,
     round: VotingRound,
-    extracted_round: "ExtractedEntityVotingRound[FdcSubmit1, FdcSubmit2, SubmitSignatures]",  # noqa: E501
+    extracted_round: ExtractedEntityVotingRound[
+        FdcSubmit1, FdcSubmit2, SubmitSignatures
+    ],
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -126,7 +130,7 @@ def check_submit_2(
             )
         else:
             for i, (r, bit, cbit) in enumerate(
-                zip(sorted_requests, bit_vector, consensus_bitvote)
+                zip(sorted_requests, bit_vector, consensus_bitvote, strict=False)
             ):
                 idx = n_requests - 1 - i
                 at = r.attestation_type
@@ -152,7 +156,9 @@ def check_submit_signatures(
     submit_2: WParsedPayload[FdcSubmit2] | None,
     submit_signatures: WParsedPayload[SubmitSignatures] | None,
     finalization: ProtocolMessageRelayed | None,
-    extracted_round: "ExtractedEntityVotingRound[FdcSubmit1, FdcSubmit2, SubmitSignatures]",  # noqa: E501
+    extracted_round: ExtractedEntityVotingRound[
+        FdcSubmit1, FdcSubmit2, SubmitSignatures
+    ],
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
@@ -216,7 +222,7 @@ def check_submit_signatures(
 
         submit_2_correct_length = len(bit_vector) == n_requests
         submit_2_dominates = all(
-            b or not cb for b, cb in zip(bit_vector, consensus_bitvote)
+            b or not cb for b, cb in zip(bit_vector, consensus_bitvote, strict=False)
         )
 
         if submit_2_correct_length and submit_2_dominates:

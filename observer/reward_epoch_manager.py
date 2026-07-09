@@ -99,7 +99,7 @@ class SigningPolicy:
     entity_mapper: EntityMapper
 
     @classmethod
-    def builder(cls) -> "SigningPolicyBuilder":
+    def builder(cls) -> SigningPolicyBuilder:
         return SigningPolicyBuilder()
 
 
@@ -210,7 +210,7 @@ class SigningPolicyBuilder:
             vrie = vries[spa[voter]]
 
             nodes = []
-            for n, w in zip(vrie.node_ids, vrie.node_weights):
+            for n, w in zip(vrie.node_ids, vrie.node_weights, strict=False):
                 nodes.append(Node(n, w))
 
             entity = Entity(
