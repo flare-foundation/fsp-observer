@@ -128,29 +128,19 @@ class MinimalConditions:
         n_blocks = current_block - last_update
         if n_blocks >= max_exponent:
             n_blocks = max_exponent
+
+        # chance that missing this many blocks is just bad luck rather than a real miss;
+        # the more blocks missed, the lower the chance, so we report once it drops below
+        # the configured threshold
         probability_pct = 100 * (1 - per_block * weight / total_weight) ** (n_blocks)
-        if n_blocks < max_exponent:
-            if probability_pct <= self.false_positive_threshold:
-                level = MessageLevel.CRITICAL
-                messages.append(
-                    mb.build(
-                        level,
-                        f"didn't submit a fast update in {n_blocks} blocks",
-                    )
+        if probability_pct < self.false_positive_threshold:
+            messages.append(
+                mb.build(
+                    MessageLevel.CRITICAL,
+                    f"didn't submit a fast update in {n_blocks} blocks "
+                    f"(false positive probability: {probability_pct:.5f}%)",
                 )
-            return messages
-
-        level = MessageLevel.WARNING
-        if probability_pct <= self.false_positive_threshold:
-            level = MessageLevel.CRITICAL
-
-        messages.append(
-            mb.build(
-                level,
-                f"didn't submit a fast update in {n_blocks} blocks "
-                f"(false positive probability: {probability_pct:.5f})%",
             )
-        )
 
         return messages
 
