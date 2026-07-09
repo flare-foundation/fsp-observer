@@ -84,6 +84,7 @@ def validate_round(
         "message_builder": mb_ftso,
         "entity": entity,
         "round": round,
+        "config": config,
     }
 
     for validator in ftso_validations:
@@ -111,6 +112,7 @@ def validate_round(
         "message_builder": mb_fdc,
         "entity": entity,
         "round": round,
+        "config": config,
     }
 
     for validator in fdc_validations:

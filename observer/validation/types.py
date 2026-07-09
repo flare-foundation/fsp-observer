@@ -2,6 +2,8 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack
 
 if TYPE_CHECKING:
+    from configuration.types import Configuration
+
     from ..message import Message, MessageBuilder
     from ..reward_epoch_manager import Entity
     from ..types import ProtocolMessageRelayed
@@ -18,6 +20,7 @@ class ValidateFnKwargs[S1, S2, SS](TypedDict):
     message_builder: MessageBuilder
     entity: Entity
     round: VotingRound
+    config: Configuration
 
 
 class ValidateFn[S1, S2, SS](Protocol):

@@ -19,6 +19,7 @@ from .signature import Signature
 from .types import ValidateFn
 
 if TYPE_CHECKING:
+    from configuration.types import Configuration
     from observer.validation.validation import ExtractedEntityVotingRound
 
 
@@ -81,6 +82,7 @@ def check_submit_2(
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
+    config: Configuration,
     extracted_round: ExtractedEntityVotingRound[
         FtsoSubmit1, FtsoSubmit2, SubmitSignatures
     ],
@@ -190,7 +192,7 @@ def check_submit_2(
                 if not (mcb_low <= v <= mcb_high):
                     minimal_condition_indices.append(str(i))
 
-            if none_indices:
+            if none_indices and not config.suppress_ftso_missing_feed:
                 ind = ", ".join(none_indices)
                 issues.append(
                     mb.build(

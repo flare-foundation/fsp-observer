@@ -187,6 +187,12 @@ def get_config() -> Configuration:
         else None
     )
 
+    # optionally suppress the ftso "missing feed" warning (entity submitted no value for
+    # some feeds); useful on networks with feeds that no provider serves
+    suppress_ftso_missing_feed = (
+        os.environ.get("SUPPRESS_FTSO_MISSING_FEED", "false").lower() == "true"
+    )
+
     config = Configuration(
         rpc_url=rpc_url,
         p_chain_rpc_url=p_chain_rpc_url,
@@ -200,6 +206,7 @@ def get_config() -> Configuration:
         log_level=log_level,
         max_block_range=max_block_range,
         false_positive_threshold=false_positive_threshold,
+        suppress_ftso_missing_feed=suppress_ftso_missing_feed,
     )
 
     return config
