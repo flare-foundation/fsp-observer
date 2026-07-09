@@ -183,6 +183,7 @@ class Contracts:
     FdcHub: Contract
     FastUpdater: Contract
     RewardManager: Contract
+    ValidatorRewardManager: Contract
 
     @classmethod
     def get_contracts(cls, w: Web3) -> Self:
