@@ -1,7 +1,7 @@
 import json
 import re
 from collections.abc import Callable
-from typing import Self
+from typing import ClassVar, Self
 
 from attrs import field, frozen
 from eth_typing import ABI, ABIEvent, ABIFunction, ChecksumAddress
@@ -203,7 +203,7 @@ class Contracts:
 
     # contracts upgraded on testnets ahead of mainnets, changing some event abis; we
     # load both the base and the "V2" artifact so every deployed variant is recognized
-    _extra_artifacts = {
+    _extra_artifacts: ClassVar[dict[str, list[str]]] = {
         "VoterRegistry": ["VoterRegistryV2"],
         "VoterPreRegistry": ["VoterPreRegistryV2"],
         "FlareSystemsCalculator": ["FlareSystemsCalculatorV2"],

@@ -182,42 +182,61 @@ def calculate_maximum_exponent(block_production: float, config: Configuration) -
     return max_exponent
 
 
+# a reward epoch's signing policy is initialized in the 2h before the epoch starts
+# (newSigningPolicyInitializationStartSeconds is 7200 on every chain): random
+# acquisition, then voter registration, then the signing policy event all land in that
+# window, independent of the reward epoch length (3.5d on mainnets, 6h on testnets)
+SIGNING_POLICY_INITIALIZATION_S = 2 * 60 * 60
+# scan a bit wider on both ends so boundary events aren't clipped by block estimation
+REGISTRATION_SCAN_BUFFER_S = 30 * 60
+
+
+async def find_block_at_timestamp(
+    w: AsyncWeb3,
+    from_block_id: int,
+    from_ts: int,
+    target_ts: int,
+    block_production: float,
+) -> int:
+    # walk back from a known (block, ts) pair using the chain's block production rate
+    # to estimate the block at target_ts, then refine until within tolerance; using the
+    # measured rate (instead of assuming 1s/block) keeps this accurate on every chain
+    block_id = from_block_id - int((from_ts - target_ts) / block_production)
+    block = await w.eth.get_block(block_id)
+    assert "timestamp" in block
+    d = block["timestamp"] - target_ts
+    while abs(d) > 600:
+        block_id -= int(d / block_production) or (1 if d > 0 else -1)
+        block = await w.eth.get_block(block_id)
+        assert "timestamp" in block
+        d = block["timestamp"] - target_ts
+    return block_id
+
+
 async def find_voter_registration_blocks(
     w: AsyncWeb3,
     current_block_id: int,
     reward_epoch: RewardEpoch,
+    block_production: float,
 ) -> tuple[int, int]:
-    # there are roughly 3600 blocks in an hour
-    avg_block_time = 3600 / 3600
     current_ts = int(time.time())
 
-    # find timestamp that is more than 2h30min (=9000s) before start_of_epoch_ts
-    target_start_ts = reward_epoch.start_s - 9000
-    start_diff = current_ts - target_start_ts
+    # everything from random acquisition to the signing policy event happens in
+    # [start - 2h, start], scanned with a buffer on each side
+    target_start_ts = (
+        reward_epoch.start_s
+        - SIGNING_POLICY_INITIALIZATION_S
+        - REGISTRATION_SCAN_BUFFER_S
+    )
+    # the epoch we observe has already started, so cap the end at the current block
+    target_end_ts = min(reward_epoch.start_s + REGISTRATION_SCAN_BUFFER_S, current_ts)
 
-    start_block_id = current_block_id - int(start_diff / avg_block_time)
-    block = await w.eth.get_block(start_block_id)
-    assert "timestamp" in block
-    d = block["timestamp"] - target_start_ts
-    while abs(d) > 600:
-        start_block_id -= 100 * (d // abs(d))
-        block = await w.eth.get_block(start_block_id)
-        assert "timestamp" in block
-        d = block["timestamp"] - target_start_ts
-
-    # end timestamp is 1h (=3600s) before start_of_epoch_ts
-    target_end_ts = reward_epoch.start_s - 3600
-    end_diff = current_ts - target_end_ts
-    end_block_id = current_block_id - int(end_diff / avg_block_time)
-
-    block = await w.eth.get_block(end_block_id)
-    assert "timestamp" in block
-    d = block["timestamp"] - target_end_ts
-    while abs(d) > 600:
-        end_block_id -= 100 * (d // abs(d))
-        block = await w.eth.get_block(end_block_id)
-        assert "timestamp" in block
-        d = block["timestamp"] - target_end_ts
+    start_block_id = await find_block_at_timestamp(
+        w, current_block_id, current_ts, target_start_ts, block_production
+    )
+    end_block_id = await find_block_at_timestamp(
+        w, current_block_id, current_ts, target_end_ts, block_production
+    )
 
     return (start_block_id, end_block_id)
 
@@ -434,13 +453,22 @@ async def observer_loop(config: Configuration) -> None:
         f" | voting_epoch={voting_epoch.id}"
     )
 
+    # block production rate differs per chain, so measure it and reuse it both to
+    # locate the registration blocks and to size the fast updates exponent window
+    block_production = await get_block_production(w)
+    maximum_exponent = calculate_maximum_exponent(block_production, config)
+
+    LOGGER.debug(
+        f"Block production: {block_production:.3f}s/block"
+        f" | max_exponent={maximum_exponent}"
+    )
+
     # we first fill signing policy for current reward epoch
 
-    # voter registration period is 2h before the reward epoch and lasts 30min
-    # find block that has timestamp approx. 2h30min before the reward epoch
-    # and block that has timestamp approx. 1h before the reward epoch
+    # the signing policy is initialized in the 2h before the reward epoch; find the
+    # block range spanning that window to read the events that build it
     lower_block_id, end_block_id = await find_voter_registration_blocks(
-        w, block["number"], reward_epoch
+        w, block["number"], reward_epoch, block_production
     )
 
     # get informations for events that build the current signing policy
@@ -458,14 +486,6 @@ async def observer_loop(config: Configuration) -> None:
         f" | starts_at_round={signing_policy.start_voting_round}"
     )
     spb = SigningPolicy.builder().for_epoch(reward_epoch.next)
-
-    block_production = await get_block_production(w)
-    maximum_exponent = calculate_maximum_exponent(block_production, config)
-
-    LOGGER.debug(
-        f"Block production: {block_production:.3f}s/block"
-        f" | max_exponent={maximum_exponent}"
-    )
 
     # print("Signing policy created for reward epoch", current_rid)
     # print("Reward Epoch object created", reward_epoch_info)

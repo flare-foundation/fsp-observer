@@ -17,9 +17,7 @@ class ContractManager:
     def get_events(self):
         contracts = self.get_contracts_list()
         return {
-            e.signature: e
-            for c in contracts
-            for e in c.events_by_signature.values()
+            e.signature: e for c in contracts for e in c.events_by_signature.values()
         }
 
     def check_submission_address(self, address) -> Sequence[Message]:
