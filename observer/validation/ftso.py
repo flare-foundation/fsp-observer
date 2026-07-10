@@ -161,6 +161,12 @@ def check_submit_2(
         medians = round.ftso.medians
         values = submit_2.parsed_payload.payload.values
 
+        # a submission may omit trailing feeds; interpret those missing feeds as None so
+        # they are validated like explicitly-missing values instead of tripping the
+        # length check below
+        if len(values) < len(medians):
+            values = list(values) + [None] * (len(medians) - len(values))
+
         if len(values) != len(medians):
             issues.append(
                 mb.build(
