@@ -13,6 +13,7 @@ from eth_abi.abi import encode
 from eth_account._utils.signing import to_standard_v
 from eth_account.messages import _hash_eip191_message, encode_defunct
 from eth_keys.datatypes import Signature as EthSignature
+from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from py_flare_common.b58 import flare_b58_encode_check
 from py_flare_common.fsp.epoch.epoch import RewardEpoch
@@ -404,6 +405,107 @@ def log_message(config: Configuration, message: Message):
     notify_generic(n.generic, message)
 
 
+async def wait_until_registered(
+    w: AsyncWeb3,
+    config: Configuration,
+    tia: ChecksumAddress,
+    signing_policy: SigningPolicy,
+    block_production: float,
+) -> SigningPolicy:
+    # the observer can only follow an entity that is part of the active signing
+    # policy; while it isn't, wait for upcoming registration windows and rescan
+    # signing policy events until the entity shows up in one
+    vef = config.epoch.voting_epoch_factory
+    ref = config.epoch.reward_epoch_factory
+
+    while tia not in signing_policy.entity_mapper.by_identity_address:
+        next_epoch = signing_policy.reward_epoch.next
+        log_message(
+            config,
+            Message.builder()
+            .add(network=config.chain_id)
+            .build(
+                MessageLevel.WARNING,
+                (
+                    f"Entity {tia} not registered for reward epoch"
+                    f" {signing_policy.reward_epoch.id}, waiting for registration"
+                    f" window of reward epoch {next_epoch.id}"
+                ),
+            ),
+        )
+
+        # voter registration for next_epoch runs in the 2h window before it
+        # starts, so sleep until that window opens
+        window_open_ts = next_epoch.start_s - SIGNING_POLICY_INITIALIZATION_S
+        while (remaining := window_open_ts - int(time.time())) > 0:
+            LOGGER.info(
+                f"Waiting for reward epoch {next_epoch.id} registration window:"
+                f" opens in {remaining}s"
+            )
+            metrics.VOTING_ROUND.set(vef.from_timestamp(int(time.time())).id)
+            metrics.REWARD_EPOCH.set(ref.from_timestamp(int(time.time())).id)
+            await asyncio.sleep(min(remaining, 3600))
+
+        # with the window open, rescan until the signing policy for next_epoch is
+        # initialized; it lands before the epoch starts unless the epoch is
+        # extended
+        while True:
+            block = await w.eth.get_block("latest")
+            assert "number" in block
+            assert "timestamp" in block
+            target_start_ts = window_open_ts - REGISTRATION_SCAN_BUFFER_S
+            lower_block_id = await find_block_at_timestamp(
+                w,
+                block["number"],
+                block["timestamp"],
+                target_start_ts,
+                block_production,
+            )
+            try:
+                signing_policy = await get_signing_policy_events(
+                    w, config, next_epoch, lower_block_id, block["number"]
+                )
+                break
+            except AssertionError:
+                LOGGER.info(
+                    f"Signing policy for reward epoch {next_epoch.id}"
+                    " not initialized yet, retrying in 60s"
+                )
+                await asyncio.sleep(60)
+
+        nb_entities = len(signing_policy.entity_mapper.by_identity_address)
+        LOGGER.info(
+            f"Signing policy loaded: reward_epoch={signing_policy.reward_epoch.id}"
+            f" | entities={nb_entities}"
+            f" | starts_at_round={signing_policy.start_voting_round}"
+        )
+
+    log_message(
+        config,
+        Message.builder()
+        .add(network=config.chain_id)
+        .build(
+            MessageLevel.INFO,
+            (
+                f"Entity {tia} registered in signing policy for reward epoch"
+                f" {signing_policy.reward_epoch.id}"
+            ),
+        ),
+    )
+
+    # the new signing policy only takes effect at its start voting round; wait for
+    # it before handing control back to the main loop
+    start_ts = vef.make_epoch(signing_policy.start_voting_round).start_s
+    while (remaining := start_ts - int(time.time())) > 0:
+        LOGGER.info(
+            f"Waiting for reward epoch {signing_policy.reward_epoch.id} to start:"
+            f" {remaining}s"
+        )
+        await asyncio.sleep(min(remaining, 600))
+
+    return signing_policy
+
+
 async def cron(
     check_functions: Sequence[Awaitable[Sequence[Message]]],
 ) -> Sequence[Message]:
@@ -515,40 +617,49 @@ async def observer_loop(config: Configuration) -> None:
         f" | entities={nb_entities}"
         f" | starts_at_round={signing_policy.start_voting_round}"
     )
+    # started before the potential registration wait below so the observer stays
+    # observable while it waits
+    if config.metrics.enabled:
+        metrics.start_metrics_server(config.metrics.port, config.metrics.address)
+
+    if tia not in signing_policy.entity_mapper.by_identity_address:
+        LOGGER.warning(f"Entity {tia} NOT found in current signing policy!")
+        signing_policy = await wait_until_registered(
+            w, config, tia, signing_policy, block_production
+        )
+        reward_epoch = signing_policy.reward_epoch
+
+        # the wait can span multiple reward epochs, refresh chain related state
+        block = await w.eth.get_block("latest")
+        assert "timestamp" in block
+        assert "number" in block
+        voting_epoch = vef.from_timestamp(block["timestamp"])
+        metrics.VOTING_ROUND.set(voting_epoch.id)
+        metrics.REWARD_EPOCH.set(reward_epoch.id)
+
     spb = SigningPolicy.builder().for_epoch(reward_epoch.next)
 
     # print("Signing policy created for reward epoch", current_rid)
     # print("Reward Epoch object created", reward_epoch_info)
     # print("Current Reward Epoch status", reward_epoch_info.status(config))
 
-    if tia in signing_policy.entity_mapper.by_identity_address:
-        metrics.REGISTERED_CURRENT_EPOCH.labels(identity_address=tia).set(1)
+    metrics.REGISTERED_CURRENT_EPOCH.labels(identity_address=tia).set(1)
 
-    _init_entity = signing_policy.entity_mapper.by_identity_address.get(tia)
-    _init_node_ids = (
-        [node_id_to_representation(n.node_id) for n in _init_entity.nodes]
-        if _init_entity
-        else []
-    )
+    _init_entity = signing_policy.entity_mapper.by_identity_address[tia]
+    _init_node_ids = [node_id_to_representation(n.node_id) for n in _init_entity.nodes]
     metrics.initialize_labels(node_ids=_init_node_ids)
 
-    if _init_entity:
-        LOGGER.info(
-            f"Entity found in signing policy:"
-            f" submit={_init_entity.submit_address}"
-            f" | nodes={_init_node_ids}"
-        )
-        await _init_entity.check_addresses(config, w)
-        _unclaimed_init = await RewardManager().get_unclaimed_rewards(
-            _init_entity, config, w
-        )
-        for m in _unclaimed_init:
-            log_message(config, m)
-    else:
-        LOGGER.warning(f"Entity {tia} NOT found in current signing policy!")
-
-    if config.metrics.enabled:
-        metrics.start_metrics_server(config.metrics.port, config.metrics.address)
+    LOGGER.info(
+        f"Entity found in signing policy:"
+        f" submit={_init_entity.submit_address}"
+        f" | nodes={_init_node_ids}"
+    )
+    await _init_entity.check_addresses(config, w)
+    _unclaimed_init = await RewardManager().get_unclaimed_rewards(
+        _init_entity, config, w
+    )
+    for m in _unclaimed_init:
+        log_message(config, m)
 
     LOGGER.info(f"Connecting to RPC: {config.rpc_url}")
 
