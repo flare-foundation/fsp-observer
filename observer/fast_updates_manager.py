@@ -45,7 +45,10 @@ class FastUpdatesManager:
         expected = nr_of_feeds + 7 - (nr_of_feeds - 1) % 8
         submitted = len(self.last_update.update_array)
 
-        if expected != submitted:
+        # a submission may omit trailing feeds it did not update; interpret those as
+        # no-update rather than a length mismatch, so only warn when more feeds than
+        # expected were sent
+        if submitted > expected:
             messages.append(
                 mb.build(
                     level,

@@ -1,0 +1,35 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "ValidatorRewardManager",
+  "sourceName": "contracts/protocol/implementation/ValidatorRewardManager.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_rewardOwner",
+          "type": "address"
+        }
+      ],
+      "name": "getStateOfRewards",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "_totalReward",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_claimedReward",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

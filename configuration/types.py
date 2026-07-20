@@ -1,6 +1,7 @@
 import json
 import re
-from typing import Callable, Self
+from collections.abc import Callable
+from typing import ClassVar, Self
 
 from attrs import field, frozen
 from eth_typing import ABI, ABIEvent, ABIFunction, ChecksumAddress
@@ -15,7 +16,16 @@ def un_prefix_0x(to_unprefixed: str) -> str:
 
 
 def abi_from_file_location(file_location):
-    return json.load(open(file_location))["abi"]
+    # a contract may be deployed with different abis across networks (e.g. an event
+    # gains a field on testnet before mainnet), so we accept multiple artifact files
+    # and merge their abis to recognize every deployed variant
+    if isinstance(file_location, str):
+        file_location = [file_location]
+
+    abi = []
+    for loc in file_location:
+        abi.extend(json.load(open(loc))["abi"])
+    return abi
 
 
 def event_signature(event_abi: ABIEvent) -> str:
@@ -86,7 +96,7 @@ def full_type_from_param(param) -> str:
 class Event:
     name: str
     abi: ABIEvent
-    contract: "Contract"
+    contract: Contract
     signature: str = field(init=False)
 
     def __str__(self) -> str:
@@ -103,7 +113,7 @@ class Event:
 class Function:
     name: str
     abi: ABIFunction
-    contract: "Contract"
+    contract: Contract
     signature: str = field(init=False)
 
     def to_full_name(self):
@@ -128,6 +138,9 @@ class Contract:
     address: ChecksumAddress
     abi: ABI = field(converter=abi_from_file_location)
     events: dict[str, Event] = field(init=False)
+    # all events across merged abis, keyed by signature; unlike `events` this keeps
+    # every variant of a same-named event (e.g. old and new VoterRegistered)
+    events_by_signature: dict[str, Event] = field(init=False)
     functions: dict[str, Function] = field(init=False)
 
     def __str__(self) -> str:
@@ -146,16 +159,20 @@ class Contract:
 
     def __attrs_post_init__(self):
         events = {}
+        events_by_signature = {}
         functions = {}
         for entry in self.abi:
             assert "type" in entry
             if entry["type"] == "event":
                 assert "name" in entry
-                events[entry["name"]] = Event(entry["name"], entry, self)
+                event = Event(entry["name"], entry, self)
+                events[entry["name"]] = event
+                events_by_signature[event.signature] = event
             elif entry["type"] == "function":
                 assert "name" in entry
                 functions[entry["name"]] = Function(entry["name"], entry, self)
         object.__setattr__(self, "events", events)
+        object.__setattr__(self, "events_by_signature", events_by_signature)
         object.__setattr__(self, "functions", functions)
 
 
@@ -182,6 +199,15 @@ class Contracts:
     FdcHub: Contract
     FastUpdater: Contract
     RewardManager: Contract
+    ValidatorRewardManager: Contract
+
+    # contracts upgraded on testnets ahead of mainnets, changing some event abis; we
+    # load both the base and the "V2" artifact so every deployed variant is recognized
+    _extra_artifacts: ClassVar[dict[str, list[str]]] = {
+        "VoterRegistry": ["VoterRegistryV2"],
+        "VoterPreRegistry": ["VoterPreRegistryV2"],
+        "FlareSystemsCalculator": ["FlareSystemsCalculatorV2"],
+    }
 
     @classmethod
     def get_contracts(cls, w: Web3) -> Self:
@@ -198,10 +224,11 @@ class Contracts:
                 registry.functions.getContractAddressByName(name).call()
             )
 
+            artifacts = [name, *cls._extra_artifacts.get(name, [])]
             kwargs[name] = Contract(
                 name,
                 address,
-                f"configuration/artifacts/{name}.json",
+                [f"configuration/artifacts/{a}.json" for a in artifacts],
             )
 
         return cls(**kwargs)
@@ -246,6 +273,7 @@ class Notification:
     discord: NotificationDiscord
     discord_embed: NotificationDiscord
     slack: NotificationSlack
+    slack_embed: NotificationSlack
     telegram: NotificationTelegram
     generic: NotificationGeneric
 
@@ -270,3 +298,6 @@ class Configuration:
     block_production_lookback: int
     metrics: MetricsConfig
     log_level: str
+    max_block_range: int
+    false_positive_threshold: float | None
+    suppress_ftso_missing_feed: bool

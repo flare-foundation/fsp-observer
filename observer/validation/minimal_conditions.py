@@ -48,6 +48,10 @@ class MinimalConditions:
     _anchor_last_bips: int | None = None
     _anchor_alerted_at: float | None = None
 
+    # optional: fast update miss notifications with a false positive probability (in %)
+    # above this are suppressed; None means no suppression (default, original behavior)
+    false_positive_threshold: float | None = None
+
     def for_network(self, network: int) -> Self:
         self.network = network
         return self
@@ -60,15 +64,19 @@ class MinimalConditions:
         self.time_period = interval
         return self
 
+    def set_false_positive_threshold(self, threshold: float | None) -> Self:
+        self.false_positive_threshold = threshold
+        return self
+
     def calculate_ftso_anchor_feeds(
-        self, medians: deque[list[FtsoMedian]], votes: deque[list[int | None]]
+        self, medians: deque[list[FtsoMedian | None]], votes: deque[list[int | None]]
     ) -> Sequence[Message]:
         mb = Message.builder().add(network=self.network, protocol=Protocol.FTSO)
         messages = []
 
         total, total_hit = 0, 0
 
-        for median_list, vote_list in zip(medians, votes):
+        for median_list, vote_list in zip(medians, votes, strict=False):
             for i in range(len(median_list)):
                 total += 1
 
@@ -76,6 +84,11 @@ class MinimalConditions:
                     continue
 
                 median = median_list[i]
+
+                # feed had no consensus median this round, nothing to compare against
+                if median is None:
+                    continue
+
                 vote = vote_list[i]
 
                 assert vote is not None
@@ -177,15 +190,22 @@ class MinimalConditions:
         n_blocks = current_block - last_update
         if n_blocks >= max_exponent:
             n_blocks = max_exponent
-        probability_ppb = int(
-            1_000_000_000 * (1 - per_block * weight / total_weight) ** (n_blocks)
-        )
+
+        # probability that missing this many blocks is just bad luck rather than a real
+        # miss (a false positive); it drops as more blocks are missed
+        probability_pct = 100 * (1 - per_block * weight / total_weight) ** (n_blocks)
+
+        # below the exponent cap only report when we are near certain it is a real miss
+        # (<= 0.00001%), otherwise stay silent; once the cap is reached always report,
+        # escalating from warning to critical at the same confidence
         if n_blocks < max_exponent:
-            if probability_ppb <= 100:
-                level = MessageLevel.CRITICAL
+            if probability_pct <= 0.00001:
                 messages.append(
                     mb.build(
-                        level,
+                        MessageLevel.CRITICAL,
+                        # FlareWatch: upstream logic, our build_alert formatting —
+                        # stable summary (no embedded %) keeps observer.py's dedup
+                        # working; the probability lives in evidence instead.
                         build_alert(
                             summary=(
                                 f"didn't submit a fast update in {n_blocks} blocks"
@@ -196,52 +216,49 @@ class MinimalConditions:
                                 "n_blocks_missed": n_blocks,
                                 "current_block": current_block,
                                 "last_update_block": last_update,
-                                "probability_ppb": probability_ppb,
+                                "probability_pct": round(probability_pct, 5),
                             },
                             actions=FAST_UPDATE_MISSED["actions"],
                         ),
                     )
                 )
-            return messages
-
-        level = MessageLevel.WARNING
-        if probability_ppb <= 100:
-            level = MessageLevel.CRITICAL
-
-        # FlareWatch patch (S40, 2026-05-07): suppress WARNING-level noise for
-        # small-share validators where high probability_ppb is expected statistical
-        # luck, not a real anomaly. CRITICAL still fires unconditionally.
-        # Threshold: 5% (50_000_000 ppb). Rationale: at our 5/65505 normalized
-        # weight on Songbird epoch 396, P(no submission in max_exponent blocks)
-        # is ~79%, which is mathematically correct but operationally noise.
-        # Whales (weight/total >= 0.01) drop probability_ppb below threshold
-        # within ~max_exponent/2 blocks, preserving alert sensitivity for them.
-        if level == MessageLevel.WARNING and probability_ppb > 50_000_000:
-            return messages
-
-        messages.append(
-            mb.build(
-                level,
-                build_alert(
-                    summary=(
-                        f"didn't submit a fast update in {n_blocks} blocks "
-                        f"(false positive probability: "
-                        f"{probability_ppb / 10_000_000:.5f}%)"
+        else:
+            level = MessageLevel.WARNING
+            if probability_pct <= 0.00001:
+                level = MessageLevel.CRITICAL
+            # NOTE: our old S40 hardcoded 5% WARNING suppression is superseded by
+            # upstream's configurable false_positive_threshold (set
+            # FALSE_POSITIVE_THRESHOLD=5 in the deploy env for identical behavior).
+            messages.append(
+                mb.build(
+                    level,
+                    build_alert(
+                        summary=(
+                            f"didn't submit a fast update in {n_blocks} blocks"
+                        ),
+                        diagnosis=FAST_UPDATE_MISSED["diagnosis"],
+                        evidence={
+                            "identity": entity.identity_address,
+                            "n_blocks_missed": n_blocks,
+                            "current_block": current_block,
+                            "last_update_block": last_update,
+                            "probability_pct": round(probability_pct, 5),
+                            "max_exponent": max_exponent,
+                        },
+                        actions=FAST_UPDATE_MISSED["actions"],
                     ),
-                    diagnosis=FAST_UPDATE_MISSED["diagnosis"],
-                    evidence={
-                        "identity": entity.identity_address,
-                        "n_blocks_missed": n_blocks,
-                        "current_block": current_block,
-                        "last_update_block": last_update,
-                        "probability_ppb": probability_ppb,
-                        "max_exponent": max_exponent,
-                        "severity_threshold": "<= 100ppb -> CRITICAL",
-                    },
-                    actions=FAST_UPDATE_MISSED["actions"],
-                ),
+                )
             )
-        )
+
+        # additional operator-configurable suppression on top of the above: when set,
+        # drop the notification if its false positive probability is above the
+        # threshold; this mainly quiets low weight entities, whose probability stays
+        # high longer
+        if (
+            self.false_positive_threshold is not None
+            and probability_pct > self.false_positive_threshold
+        ):
+            return []
 
         return messages
 

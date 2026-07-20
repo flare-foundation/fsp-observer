@@ -1,7 +1,9 @@
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Optional, Protocol, TypedDict, Unpack
+from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack
 
 if TYPE_CHECKING:
+    from configuration.types import Configuration
+
     from ..message import Message, MessageBuilder
     from ..reward_epoch_manager import Entity
     from ..types import ProtocolMessageRelayed
@@ -10,18 +12,19 @@ if TYPE_CHECKING:
 
 
 class ValidateFnKwargs[S1, S2, SS](TypedDict):
-    submit_1: Optional["WParsedPayload[S1]"]
-    submit_2: Optional["WParsedPayload[S2]"]
-    submit_signatures: Optional["WParsedPayload[SS]"]
-    finalization: Optional["ProtocolMessageRelayed"]
-    extracted_round: "ExtractedEntityVotingRound[S1, S2, SS]"
-    message_builder: "MessageBuilder"
-    entity: "Entity"
-    round: "VotingRound"
+    submit_1: WParsedPayload[S1] | None
+    submit_2: WParsedPayload[S2] | None
+    submit_signatures: WParsedPayload[SS] | None
+    finalization: ProtocolMessageRelayed | None
+    extracted_round: ExtractedEntityVotingRound[S1, S2, SS]
+    message_builder: MessageBuilder
+    entity: Entity
+    round: VotingRound
+    config: Configuration
 
 
 class ValidateFn[S1, S2, SS](Protocol):
     def __call__(
         self,
         **kwargs: Unpack[ValidateFnKwargs[S1, S2, SS]],
-    ) -> Sequence["Message"]: ...
+    ) -> Sequence[Message]: ...

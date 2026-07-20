@@ -1,0 +1,9 @@
+# ignore everything
+*
+
+# project files
+!main.py
+!pyproject.toml
+!uv.lock
+!observer
+!configuration

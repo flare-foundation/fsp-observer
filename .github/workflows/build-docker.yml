@@ -55,7 +55,7 @@ jobs:
     - name: Build and push default image
       uses: docker/build-push-action@v5
       with:
-        context: . # Because GH actions are for kids and put protection on everything; https://stackoverflow.com/a/71159809/11276254
+        context: .
         platforms: linux/amd64,linux/arm64
         push: true
         tags: ${{ env.ALL_TAGS }}

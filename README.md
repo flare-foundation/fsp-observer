@@ -34,18 +34,18 @@ docker run \
     -e METRICS_ENABLED="true" \
     -e METRICS_PORT="8000" \
     -e LOG_LEVEL="INFO" \
+    -e MAX_BLOCK_RANGE="1000" \
     ghcr.io/flare-foundation/fsp-observer:main
 ```
 
-Alternatively python can be used to run:
+Alternatively [uv](https://docs.astral.sh/uv/) can be used to run:
 
 ```bash
-python -m venv venv
-pip install -r requirements.txt
+uv sync
 # optionally create .env file
 RPC_BASE_URL="https://flare-api.flare.network" \
   IDENTITY_ADDRESS="0x0000000000000000000000000000000000000000" \
-  python main.py
+  uv run python main.py
 ```
 
 ## Environment variables
@@ -59,6 +59,7 @@ RPC_BASE_URL="https://flare-api.flare.network" \
 | `NOTIFICATION_DISCORD_WEBHOOK` | no | - | Discord webhook URL (comma-separated for multiple) |
 | `NOTIFICATION_DISCORD_EMBED_WEBHOOK` | no | - | Discord embed webhook URL |
 | `NOTIFICATION_SLACK_WEBHOOK` | no | - | Slack webhook URL |
+| `NOTIFICATION_SLACK_EMBED_WEBHOOK` | no | - | Slack embed webhook URL |
 | `NOTIFICATION_TELEGRAM_BOT_TOKEN` | no | - | Telegram bot token (comma-separated for multiple) |
 | `NOTIFICATION_TELEGRAM_CHAT_ID` | no | - | Telegram chat ID (comma-separated, paired with bot tokens) |
 | `NOTIFICATION_GENERIC_WEBHOOK` | no | - | Generic HTTP POST webhook URL |
@@ -66,6 +67,9 @@ RPC_BASE_URL="https://flare-api.flare.network" \
 | `METRICS_PORT` | no | `8000` | Prometheus metrics server port |
 | `METRICS_ADDRESS` | no | `0.0.0.0` | Prometheus metrics server bind address |
 | `LOG_LEVEL` | no | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `MAX_BLOCK_RANGE` | no | `1000` | Max number of blocks per `get_logs` request (lower it if the RPC caps the block range) |
+| `FALSE_POSITIVE_THRESHOLD` | no | - | Suppress fast update miss notifications whose false positive probability (in %) is above this; unset = no suppression, mainly quiets low weight entities |
+| `SUPPRESS_FTSO_MISSING_FEED` | no | `false` | Suppress the FTSO "missing feed" warning (entity submitted no value for some feeds) |
 
 ## Prometheus metrics
 

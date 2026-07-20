@@ -111,13 +111,20 @@ def get_notification_config() -> Notification:
     if slack_webhook is not None:
         slack.extend(slack_webhook.split(","))
 
+    slack_embed_webhook = os.environ.get("NOTIFICATION_SLACK_EMBED_WEBHOOK")
+    slack_embed = []
+    if slack_embed_webhook is not None:
+        slack_embed.extend(slack_embed_webhook.split(","))
+
     telegram_bot_token = os.environ.get("NOTIFICATION_TELEGRAM_BOT_TOKEN")
     telegram_chat_id = os.environ.get("NOTIFICATION_TELEGRAM_CHAT_ID")
     telegram = []
     if telegram_bot_token is not None and telegram_chat_id is not None:
         bot_tokens = telegram_bot_token.split(",")
         chat_ids = telegram_chat_id.split(",")
-        telegram = [TelegramBot(t, c) for t, c in zip(bot_tokens, chat_ids)]
+        telegram = [
+            TelegramBot(t, c) for t, c in zip(bot_tokens, chat_ids, strict=False)
+        ]
 
     generic_webhook = os.environ.get("NOTIFICATION_GENERIC_WEBHOOK")
     generic = []
@@ -128,6 +135,7 @@ def get_notification_config() -> Notification:
         discord=NotificationDiscord(discord),
         discord_embed=NotificationDiscord(discord_embed),
         slack=NotificationSlack(slack),
+        slack_embed=NotificationSlack(slack_embed),
         telegram=NotificationTelegram(telegram),
         generic=NotificationGeneric(generic),
     )
@@ -172,6 +180,26 @@ def get_config() -> Configuration:
 
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 
+    # some rpc providers cap the number of blocks per get_logs request, so we chunk
+    # ranged log queries to stay within this limit
+    max_block_range = int(os.environ.get("MAX_BLOCK_RANGE", "1000"))
+
+    # optionally suppress fast update miss notifications whose false positive
+    # probability (in %) is above this; unset = no suppression (mainly affects
+    # low weight entities, whose probability stays high longer)
+    _false_positive_threshold = os.environ.get("FALSE_POSITIVE_THRESHOLD")
+    false_positive_threshold = (
+        float(_false_positive_threshold)
+        if _false_positive_threshold is not None
+        else None
+    )
+
+    # optionally suppress the ftso "missing feed" warning (entity submitted no value for
+    # some feeds); useful on networks with feeds that no provider serves
+    suppress_ftso_missing_feed = (
+        os.environ.get("SUPPRESS_FTSO_MISSING_FEED", "false").lower() == "true"
+    )
+
     config = Configuration(
         rpc_url=rpc_url,
         p_chain_rpc_url=p_chain_rpc_url,
@@ -184,6 +212,9 @@ def get_config() -> Configuration:
         block_production_lookback=block_production_lookback,
         metrics=get_metrics_config(),
         log_level=log_level,
+        max_block_range=max_block_range,
+        false_positive_threshold=false_positive_threshold,
+        suppress_ftso_missing_feed=suppress_ftso_missing_feed,
     )
 
     return config

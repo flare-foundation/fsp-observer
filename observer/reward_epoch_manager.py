@@ -99,7 +99,7 @@ class SigningPolicy:
     entity_mapper: EntityMapper
 
     @classmethod
-    def builder(cls) -> "SigningPolicyBuilder":
+    def builder(cls) -> SigningPolicyBuilder:
         return SigningPolicyBuilder()
 
 
@@ -210,7 +210,7 @@ class SigningPolicyBuilder:
             vrie = vries[spa[voter]]
 
             nodes = []
-            for n, w in zip(vrie.node_ids, vrie.node_weights):
+            for n, w in zip(vrie.node_ids, vrie.node_weights, strict=False):
                 nodes.append(Node(n, w))
 
             entity = Entity(
@@ -289,4 +289,45 @@ class RewardManager:
                                 ),
                             )
                         )
+        return messages
+
+    async def get_unclaimed_validator_rewards(
+        self, entity: Entity, config: Configuration, w: AsyncWeb3
+    ) -> Sequence[Message]:
+        mb = Message.builder()
+        messages = []
+        addresses = [
+            entity.identity_address,
+            entity.delegation_address,
+            entity.signing_policy_address,
+            entity.submit_address,
+            entity.submit_signatures_address,
+        ]
+        metrics.UNCLAIMED_VALIDATOR_REWARDS.clear()
+        for address in addresses:
+            try:
+                state_func = w.eth.contract(
+                    abi=config.contracts.ValidatorRewardManager.abi,
+                    address=config.contracts.ValidatorRewardManager.address,
+                ).functions["getStateOfRewards"]
+                state = await state_func(address).call()
+                # state[0] = total reward, state[1] = claimed reward
+                # unclaimed = total - claimed
+                unclaimed = state[0] - state[1]
+                if unclaimed > 0:
+                    metrics.UNCLAIMED_VALIDATOR_REWARDS.labels(
+                        identity_address=metrics.identity_address,
+                        address=address,
+                    ).set(unclaimed)
+                    messages.append(
+                        mb.build(
+                            MessageLevel.WARNING,
+                            (
+                                f"Unclaimed validator rewards for address {address},"
+                                f" amount {unclaimed}"
+                            ),
+                        )
+                    )
+            except Exception:
+                pass
         return messages

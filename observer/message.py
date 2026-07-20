@@ -27,7 +27,7 @@ class Message:
     protocol: ProtocolId | None = None
 
     @classmethod
-    def builder(cls) -> "MessageBuilder":
+    def builder(cls) -> MessageBuilder:
         return MessageBuilder()
 
     def build_str(self, with_log=False) -> str:

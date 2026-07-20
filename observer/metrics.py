@@ -189,6 +189,12 @@ UNCLAIMED_REWARDS = Gauge(
     ["identity_address", "address", "reward_epoch", "claim_type"],
 )
 
+UNCLAIMED_VALIDATOR_REWARDS = Gauge(
+    "flare_fsp_unclaimed_validator_rewards_wei",
+    "Unclaimed validator (P-chain stake) reward amount in wei per address",
+    ["identity_address", "address"],
+)
+
 
 def initialize_labels(node_ids: list[str] | None = None) -> None:
     """Pre-initialize all label combinations so time series appear immediately at 0."""

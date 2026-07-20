@@ -14,6 +14,7 @@ from eth_abi.abi import encode
 from eth_account._utils.signing import to_standard_v
 from eth_account.messages import _hash_eip191_message, encode_defunct
 from eth_keys.datatypes import Signature as EthSignature
+from eth_typing import ChecksumAddress
 from eth_utils.address import to_checksum_address
 from py_flare_common.b58 import flare_b58_encode_check
 from py_flare_common.fsp.epoch.epoch import RewardEpoch
@@ -64,6 +65,7 @@ from .notification import (
     notify_discord_embed,
     notify_generic,
     notify_slack,
+    notify_slack_embed,
     notify_telegram,
 )
 from .portal_post import mirror_to_portal
@@ -185,44 +187,85 @@ def calculate_maximum_exponent(block_production: float, config: Configuration) -
     return max_exponent
 
 
+# a reward epoch's signing policy is initialized in the 2h before the epoch starts
+# (newSigningPolicyInitializationStartSeconds is 7200 on every chain): random
+# acquisition, then voter registration, then the signing policy event all land in that
+# window, independent of the reward epoch length (3.5d on mainnets, 6h on testnets)
+SIGNING_POLICY_INITIALIZATION_S = 2 * 60 * 60
+# scan a bit wider on both ends so boundary events aren't clipped by block estimation
+REGISTRATION_SCAN_BUFFER_S = 30 * 60
+
+
+async def find_block_at_timestamp(
+    w: AsyncWeb3,
+    from_block_id: int,
+    from_ts: int,
+    target_ts: int,
+    block_production: float,
+) -> int:
+    # walk back from a known (block, ts) pair using the chain's block production rate
+    # to estimate the block at target_ts, then refine until within tolerance; using the
+    # measured rate (instead of assuming 1s/block) keeps this accurate on every chain
+    block_id = from_block_id - int((from_ts - target_ts) / block_production)
+    block = await w.eth.get_block(block_id)
+    assert "timestamp" in block
+    d = block["timestamp"] - target_ts
+    while abs(d) > 600:
+        block_id -= int(d / block_production) or (1 if d > 0 else -1)
+        block = await w.eth.get_block(block_id)
+        assert "timestamp" in block
+        d = block["timestamp"] - target_ts
+    return block_id
+
+
 async def find_voter_registration_blocks(
     w: AsyncWeb3,
     current_block_id: int,
     reward_epoch: RewardEpoch,
+    block_production: float,
 ) -> tuple[int, int]:
-    # there are roughly 3600 blocks in an hour
-    avg_block_time = 3600 / 3600
     current_ts = int(time.time())
 
-    # find timestamp that is more than 2h30min (=9000s) before start_of_epoch_ts
-    target_start_ts = reward_epoch.start_s - 9000
-    start_diff = current_ts - target_start_ts
+    # everything from random acquisition to the signing policy event happens in
+    # [start - 2h, start], scanned with a buffer on each side
+    target_start_ts = (
+        reward_epoch.start_s
+        - SIGNING_POLICY_INITIALIZATION_S
+        - REGISTRATION_SCAN_BUFFER_S
+    )
+    # the epoch we observe has already started, so cap the end at the current block
+    target_end_ts = min(reward_epoch.start_s + REGISTRATION_SCAN_BUFFER_S, current_ts)
 
-    start_block_id = current_block_id - int(start_diff / avg_block_time)
-    block = await w.eth.get_block(start_block_id)
-    assert "timestamp" in block
-    d = block["timestamp"] - target_start_ts
-    while abs(d) > 600:
-        start_block_id -= 100 * (d // abs(d))
-        block = await w.eth.get_block(start_block_id)
-        assert "timestamp" in block
-        d = block["timestamp"] - target_start_ts
-
-    # end timestamp is 1h (=3600s) before start_of_epoch_ts
-    target_end_ts = reward_epoch.start_s - 3600
-    end_diff = current_ts - target_end_ts
-    end_block_id = current_block_id - int(end_diff / avg_block_time)
-
-    block = await w.eth.get_block(end_block_id)
-    assert "timestamp" in block
-    d = block["timestamp"] - target_end_ts
-    while abs(d) > 600:
-        end_block_id -= 100 * (d // abs(d))
-        block = await w.eth.get_block(end_block_id)
-        assert "timestamp" in block
-        d = block["timestamp"] - target_end_ts
+    start_block_id = await find_block_at_timestamp(
+        w, current_block_id, current_ts, target_start_ts, block_production
+    )
+    end_block_id = await find_block_at_timestamp(
+        w, current_block_id, current_ts, target_end_ts, block_production
+    )
 
     return (start_block_id, end_block_id)
+
+
+async def get_logs_chunked(
+    w: AsyncWeb3,
+    params: dict[str, Any],
+    start_block: int,
+    end_block: int,
+    max_block_range: int,
+) -> list:
+    # some rpc providers cap the number of blocks per get_logs request, so we split
+    # the range into chunks of at most max_block_range blocks
+    logs = []
+    chunk_start = start_block
+    while chunk_start <= end_block:
+        chunk_end = min(chunk_start + max_block_range - 1, end_block)
+        logs.extend(
+            await w.eth.get_logs(
+                {**params, "fromBlock": chunk_start, "toBlock": chunk_end}
+            )
+        )
+        chunk_start = chunk_end + 1
+    return logs
 
 
 async def get_signing_policy_events(
@@ -257,19 +300,20 @@ async def get_signing_policy_events(
     event_signatures = {
         e.signature: e
         for c in contracts
-        for e in c.events.values()
+        for e in c.events_by_signature.values()
         if e.name in event_names
     }
 
-    block_logs = await w.eth.get_logs(
-        {
-            "address": [contract.address for contract in contracts],
-            "fromBlock": start_block,
-            "toBlock": end_block,
-        }
+    block_logs = await get_logs_chunked(
+        w,
+        {"address": [contract.address for contract in contracts]},
+        start_block,
+        end_block,
+        config.max_block_range,
     )
 
-    _relay_patch_sps = await w.eth.get_logs(
+    _relay_patch_sps = await get_logs_chunked(
+        w,
         {
             "address": [
                 to_checksum_address("0x92a6E1127262106611e1e129BB64B6D8654273F7"),
@@ -277,15 +321,44 @@ async def get_signing_policy_events(
                 to_checksum_address("0x57a4c3676d08Aa5d15410b5A6A80fBcEF72f3F45"),
                 to_checksum_address("0x67a916E175a2aF01369294739AA60dDdE1Fad189"),
             ],
-            "fromBlock": start_block,
-            "toBlock": end_block,
             "topics": [
                 "0x"
                 + config.contracts.Relay.events["SigningPolicyInitialized"].signature
             ],
-        }
+        },
+        start_block,
+        end_block,
+        config.max_block_range,
     )
     block_logs.extend(_relay_patch_sps)
+
+    # NOTE:(@janezicmatej) VoterRegistry and FlareSystemsCalculator were redeployed on
+    # flare and songbird on 2026-07-17; the contract registry only returns the new
+    # addresses, so registrations emitted by the legacy deployments have to be indexed
+    # in addition (abis for both variants are already loaded, see Contracts)
+    _legacy_registration_logs = await get_logs_chunked(
+        w,
+        {
+            "address": [
+                # flare: legacy VoterRegistry
+                to_checksum_address("0x2580101692366e2f331e891180d9ffdF861Fce83"),
+                # flare: legacy FlareSystemsCalculator
+                to_checksum_address("0x67c4B11c710D35a279A41cff5eb089Fe72748CF8"),
+                # songbird: legacy VoterRegistry
+                to_checksum_address("0x31B9EC65C731c7D973a33Ef3FC83B653f540dC8D"),
+                # songbird: legacy FlareSystemsCalculator
+                to_checksum_address("0x126FAeEc75601dA3354c0b5Cc0b60C85fCbC3A5e"),
+            ],
+        },
+        start_block,
+        end_block,
+        config.max_block_range,
+    )
+    block_logs.extend(_legacy_registration_logs)
+
+    # patched logs come from separate queries and get appended out of order; restore
+    # chain order so the SigningPolicyInitialized early-break below doesn't skip them
+    block_logs.sort(key=lambda log: (log["blockNumber"], log["logIndex"]))
 
     for log in block_logs:
         sig = log["topics"][0]
@@ -494,6 +567,7 @@ def log_message(config: Configuration, message: Message):
     notify_discord(n.discord, message)
     notify_discord_embed(n.discord_embed, message)
     notify_slack(n.slack, message)
+    notify_slack_embed(n.slack_embed, message)
     notify_telegram(n.telegram, message)
     notify_generic(n.generic, message)
 
@@ -504,6 +578,107 @@ def log_message(config: Configuration, message: Message):
     # the Discord path. Inherits the 300s dedup gate above for free, so
     # one row lands per state, not per polling cycle.
     mirror_to_portal(config, message)
+
+
+async def wait_until_registered(
+    w: AsyncWeb3,
+    config: Configuration,
+    tia: ChecksumAddress,
+    signing_policy: SigningPolicy,
+    block_production: float,
+) -> SigningPolicy:
+    # the observer can only follow an entity that is part of the active signing
+    # policy; while it isn't, wait for upcoming registration windows and rescan
+    # signing policy events until the entity shows up in one
+    vef = config.epoch.voting_epoch_factory
+    ref = config.epoch.reward_epoch_factory
+
+    while tia not in signing_policy.entity_mapper.by_identity_address:
+        next_epoch = signing_policy.reward_epoch.next
+        log_message(
+            config,
+            Message.builder()
+            .add(network=config.chain_id)
+            .build(
+                MessageLevel.WARNING,
+                (
+                    f"Entity {tia} not registered for reward epoch"
+                    f" {signing_policy.reward_epoch.id}, waiting for registration"
+                    f" window of reward epoch {next_epoch.id}"
+                ),
+            ),
+        )
+
+        # voter registration for next_epoch runs in the 2h window before it
+        # starts, so sleep until that window opens
+        window_open_ts = next_epoch.start_s - SIGNING_POLICY_INITIALIZATION_S
+        while (remaining := window_open_ts - int(time.time())) > 0:
+            LOGGER.info(
+                f"Waiting for reward epoch {next_epoch.id} registration window:"
+                f" opens in {remaining}s"
+            )
+            metrics.VOTING_ROUND.set(vef.from_timestamp(int(time.time())).id)
+            metrics.REWARD_EPOCH.set(ref.from_timestamp(int(time.time())).id)
+            await asyncio.sleep(min(remaining, 3600))
+
+        # with the window open, rescan until the signing policy for next_epoch is
+        # initialized; it lands before the epoch starts unless the epoch is
+        # extended
+        while True:
+            block = await w.eth.get_block("latest")
+            assert "number" in block
+            assert "timestamp" in block
+            target_start_ts = window_open_ts - REGISTRATION_SCAN_BUFFER_S
+            lower_block_id = await find_block_at_timestamp(
+                w,
+                block["number"],
+                block["timestamp"],
+                target_start_ts,
+                block_production,
+            )
+            try:
+                signing_policy = await get_signing_policy_events(
+                    w, config, next_epoch, lower_block_id, block["number"]
+                )
+                break
+            except AssertionError:
+                LOGGER.info(
+                    f"Signing policy for reward epoch {next_epoch.id}"
+                    " not initialized yet, retrying in 60s"
+                )
+                await asyncio.sleep(60)
+
+        nb_entities = len(signing_policy.entity_mapper.by_identity_address)
+        LOGGER.info(
+            f"Signing policy loaded: reward_epoch={signing_policy.reward_epoch.id}"
+            f" | entities={nb_entities}"
+            f" | starts_at_round={signing_policy.start_voting_round}"
+        )
+
+    log_message(
+        config,
+        Message.builder()
+        .add(network=config.chain_id)
+        .build(
+            MessageLevel.INFO,
+            (
+                f"Entity {tia} registered in signing policy for reward epoch"
+                f" {signing_policy.reward_epoch.id}"
+            ),
+        ),
+    )
+
+    # the new signing policy only takes effect at its start voting round; wait for
+    # it before handing control back to the main loop
+    start_ts = vef.make_epoch(signing_policy.start_voting_round).start_s
+    while (remaining := start_ts - int(time.time())) > 0:
+        LOGGER.info(
+            f"Waiting for reward epoch {signing_policy.reward_epoch.id} to start:"
+            f" {remaining}s"
+        )
+        await asyncio.sleep(min(remaining, 600))
+
+    return signing_policy
 
 
 async def cron(
@@ -585,13 +760,24 @@ async def observer_loop(config: Configuration) -> None:
         f" | voting_epoch={voting_epoch.id}"
     )
 
+    # block production rate differs per chain, so measure it and reuse it both to
+    # locate the registration blocks and to size the fast updates exponent window
+    # FlareWatch: pass the configured lookback (pruned local RPC nodes don't
+    # retain the upstream default 1M blocks of history).
+    block_production = await get_block_production(w, config.block_production_lookback)
+    maximum_exponent = calculate_maximum_exponent(block_production, config)
+
+    LOGGER.debug(
+        f"Block production: {block_production:.3f}s/block"
+        f" | max_exponent={maximum_exponent}"
+    )
+
     # we first fill signing policy for current reward epoch
 
-    # voter registration period is 2h before the reward epoch and lasts 30min
-    # find block that has timestamp approx. 2h30min before the reward epoch
-    # and block that has timestamp approx. 1h before the reward epoch
+    # the signing policy is initialized in the 2h before the reward epoch; find the
+    # block range spanning that window to read the events that build it
     lower_block_id, end_block_id = await find_voter_registration_blocks(
-        w, block["number"], reward_epoch
+        w, block["number"], reward_epoch, block_production
     )
 
     # get informations for events that build the current signing policy
@@ -608,48 +794,49 @@ async def observer_loop(config: Configuration) -> None:
         f" | entities={nb_entities}"
         f" | starts_at_round={signing_policy.start_voting_round}"
     )
+    # started before the potential registration wait below so the observer stays
+    # observable while it waits
+    if config.metrics.enabled:
+        metrics.start_metrics_server(config.metrics.port, config.metrics.address)
+
+    if tia not in signing_policy.entity_mapper.by_identity_address:
+        LOGGER.warning(f"Entity {tia} NOT found in current signing policy!")
+        signing_policy = await wait_until_registered(
+            w, config, tia, signing_policy, block_production
+        )
+        reward_epoch = signing_policy.reward_epoch
+
+        # the wait can span multiple reward epochs, refresh chain related state
+        block = await w.eth.get_block("latest")
+        assert "timestamp" in block
+        assert "number" in block
+        voting_epoch = vef.from_timestamp(block["timestamp"])
+        metrics.VOTING_ROUND.set(voting_epoch.id)
+        metrics.REWARD_EPOCH.set(reward_epoch.id)
+
     spb = SigningPolicy.builder().for_epoch(reward_epoch.next)
-
-    block_production = await get_block_production(w, config.block_production_lookback)
-    maximum_exponent = calculate_maximum_exponent(block_production, config)
-
-    LOGGER.debug(
-        f"Block production: {block_production:.3f}s/block"
-        f" | max_exponent={maximum_exponent}"
-    )
 
     # print("Signing policy created for reward epoch", current_rid)
     # print("Reward Epoch object created", reward_epoch_info)
     # print("Current Reward Epoch status", reward_epoch_info.status(config))
 
-    if tia in signing_policy.entity_mapper.by_identity_address:
-        metrics.REGISTERED_CURRENT_EPOCH.labels(identity_address=tia).set(1)
+    metrics.REGISTERED_CURRENT_EPOCH.labels(identity_address=tia).set(1)
 
-    _init_entity = signing_policy.entity_mapper.by_identity_address.get(tia)
-    _init_node_ids = (
-        [node_id_to_representation(n.node_id) for n in _init_entity.nodes]
-        if _init_entity
-        else []
-    )
+    _init_entity = signing_policy.entity_mapper.by_identity_address[tia]
+    _init_node_ids = [node_id_to_representation(n.node_id) for n in _init_entity.nodes]
     metrics.initialize_labels(node_ids=_init_node_ids)
 
-    if _init_entity:
-        LOGGER.info(
-            f"Entity found in signing policy:"
-            f" submit={_init_entity.submit_address}"
-            f" | nodes={_init_node_ids}"
-        )
-        await _init_entity.check_addresses(config, w)
-        _unclaimed_init = await RewardManager().get_unclaimed_rewards(
-            _init_entity, config, w
-        )
-        for m in _unclaimed_init:
-            log_message(config, m)
-    else:
-        LOGGER.warning(f"Entity {tia} NOT found in current signing policy!")
-
-    if config.metrics.enabled:
-        metrics.start_metrics_server(config.metrics.port, config.metrics.address)
+    LOGGER.info(
+        f"Entity found in signing policy:"
+        f" submit={_init_entity.submit_address}"
+        f" | nodes={_init_node_ids}"
+    )
+    await _init_entity.check_addresses(config, w)
+    _unclaimed_init = await RewardManager().get_unclaimed_rewards(
+        _init_entity, config, w
+    )
+    for m in _unclaimed_init:
+        log_message(config, m)
 
     LOGGER.info(f"Connecting to RPC: {config.rpc_url}")
 
@@ -717,6 +904,7 @@ async def observer_loop(config: Configuration) -> None:
         MinimalConditions()
         .for_network(config.chain_id)
         .for_reward_epoch(reward_epoch.id)
+        .set_false_positive_threshold(config.false_positive_threshold)
     )
     last_minimal_conditions_check = int(time.time())
     last_ping = int(time.time())
@@ -731,7 +919,7 @@ async def observer_loop(config: Configuration) -> None:
     )
     uptime_validations = 0
 
-    medians: deque[list[FtsoMedian]] = deque(
+    medians: deque[list[FtsoMedian | None]] = deque(
         maxlen=minimal_conditions.time_period.value // 90
     )
     entity_votes: deque[list[int | None]] = deque(

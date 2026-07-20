@@ -1,9 +1,0 @@
-requests==2.32.5
-py-flare-common==0.1.6
-attrs==25.3.0
-python-dotenv==1.1.1
-web3==7.13.0
-prometheus-client==0.21.1
-# FlareWatch: portal `posts` mirror (observer/portal_post.py). [binary]
-# bundles libpq so the slim python:3.13 image needs no apt packages.
-psycopg[binary]==3.2.3

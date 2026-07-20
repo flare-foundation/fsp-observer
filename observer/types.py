@@ -79,13 +79,20 @@ class VoterRegistered:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Self:
+        # newer abi packs the public key into a `publicKey` struct (x, y) and adds a
+        # `signature` field, older abi exposes `publicKeyPart1`/`publicKeyPart2`
+        if "publicKey" in d:
+            part1, part2 = d["publicKey"]["x"], d["publicKey"]["y"]
+        else:
+            part1, part2 = d["publicKeyPart1"], d["publicKeyPart2"]
+
         return cls(
             reward_epoch_id=int(d["rewardEpochId"]),
             voter=d["voter"],
             signing_policy_address=d["signingPolicyAddress"],
             submit_address=d["submitAddress"],
             submit_signatures_address=d["submitSignaturesAddress"],
-            public_key=d["publicKeyPart1"].hex() + d["publicKeyPart2"].hex(),
+            public_key=part1.hex() + part2.hex(),
             registration_weight=int(d["registrationWeight"]),
         )
 

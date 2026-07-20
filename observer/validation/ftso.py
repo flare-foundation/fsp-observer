@@ -30,6 +30,7 @@ from .signature import Signature
 from .types import ValidateFn
 
 if TYPE_CHECKING:
+    from configuration.types import Configuration
     from observer.validation.validation import ExtractedEntityVotingRound
 
 
@@ -44,7 +45,9 @@ def check_submit_1(
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
-    extracted_round: "ExtractedEntityVotingRound[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]",  # noqa: E501
+    extracted_round: ExtractedEntityVotingRound[
+        FtsoSubmit1, FtsoSubmit2, SubmitSignatures
+    ],
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -137,7 +140,10 @@ def check_submit_2(
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
-    extracted_round: "ExtractedEntityVotingRound[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]",  # noqa: E501
+    config: Configuration,
+    extracted_round: ExtractedEntityVotingRound[
+        FtsoSubmit1, FtsoSubmit2, SubmitSignatures
+    ],
     **_,
 ) -> Sequence[Message]:
     issues = []
@@ -248,6 +254,12 @@ def check_submit_2(
         medians = round.ftso.medians
         values = submit_2.parsed_payload.payload.values
 
+        # a submission may omit trailing feeds; interpret those missing feeds as None so
+        # they are validated like explicitly-missing values instead of tripping the
+        # length check below
+        if len(values) < len(medians):
+            values = list(values) + [None] * (len(medians) - len(values))
+
         if len(values) != len(medians):
             issues.append(
                 mb.build(
@@ -263,9 +275,13 @@ def check_submit_2(
             none_indices = []
             minimal_condition_indices = []
 
-            for i, (v, m) in enumerate(zip(values, medians)):
+            for i, (v, m) in enumerate(zip(values, medians, strict=False)):
                 if v is None:
                     none_indices.append(str(i))
+                    continue
+
+                # no consensus median for this feed, nothing to compare against
+                if m is None:
                     continue
 
                 # as per https://proposals.flare.network/FIP/FIP_10.html
@@ -275,7 +291,7 @@ def check_submit_2(
                 if not (mcb_low <= v <= mcb_high):
                     minimal_condition_indices.append(str(i))
 
-            if none_indices:
+            if none_indices and not config.suppress_ftso_missing_feed:
                 ind = ", ".join(none_indices)
                 issues.append(
                     mb.build(
@@ -307,7 +323,9 @@ def check_submit_signatures(
     message_builder: MessageBuilder,
     entity: Entity,
     round: VotingRound,
-    extracted_round: "ExtractedEntityVotingRound[FtsoSubmit1, FtsoSubmit2, SubmitSignatures]",  # noqa: E501
+    extracted_round: ExtractedEntityVotingRound[
+        FtsoSubmit1, FtsoSubmit2, SubmitSignatures
+    ],
     **_,
 ) -> Sequence[Message]:
     issues = []
