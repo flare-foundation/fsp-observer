@@ -55,6 +55,7 @@ RPC_BASE_URL="https://flare-api.flare.network" \
 | `RPC_BASE_URL` | yes | - | RPC base URL without `/ext/bc/C/rpc` suffix |
 | `IDENTITY_ADDRESS` | yes | - | Identity address of the observed entity |
 | `FEE_THRESHOLD` | no | `25` | Balance threshold in FLR to trigger low balance warning |
+| `BLOCK_PRODUCTION_LOOKBACK` | no | `1000000` | Blocks to look back when computing average block time at startup. Lower this for pruned RPC nodes that do not retain deep history (e.g. `1000` for a validator's own pruned node). |
 | `NOTIFICATION_DISCORD_WEBHOOK` | no | - | Discord webhook URL (comma-separated for multiple) |
 | `NOTIFICATION_DISCORD_EMBED_WEBHOOK` | no | - | Discord embed webhook URL |
 | `NOTIFICATION_SLACK_WEBHOOK` | no | - | Slack webhook URL |

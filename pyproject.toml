@@ -9,6 +9,8 @@ dependencies = [
     "python-dotenv==1.2.2",
     "web3==7.16.0",
     "prometheus-client==0.25.0",
+    # FlareWatch: portal posts mirror (observer/portal_post.py)
+    "psycopg[binary]>=3.2.3,<3.3",
 ]
 
 [dependency-groups]
