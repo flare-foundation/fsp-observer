@@ -857,6 +857,37 @@ async def observer_loop(config: Configuration) -> None:
         f" | voting_epoch={voting_epoch.id}"
     )
 
+    # --- FlareWatch passive-mode gate (registered-but-not-yet-in-policy) ---
+    # A newly-launched validator is registered ~3.5 days before its first reward
+    # epoch; until then our identity is absent from the active signing policy and
+    # every by_identity_address[tia] lookup below would KeyError, crash
+    # observer_loop, and (restart:unless-stopped) crash-loop the container.
+    # Instead wait here, periodically reloading the signing policy for the latest
+    # reward epoch, until we appear. Metrics stay served; SGB (always in policy)
+    # never enters this loop.
+    while tia not in signing_policy.entity_mapper.by_identity_address:
+        metrics.REGISTERED_CURRENT_EPOCH.labels(identity_address=tia).set(0)
+        LOGGER.warning(
+            f"identity {tia} not in reward_epoch={reward_epoch.id} signing"
+            f" policy ({len(signing_policy.entity_mapper.by_identity_address)}"
+            f" entities) - passive (not yet participating); reloading in 300s"
+        )
+        time.sleep(300)
+        block = await w.eth.get_block("latest")
+        assert "timestamp" in block and "number" in block
+        reward_epoch = ref.from_timestamp(block["timestamp"])
+        voting_epoch = vef.from_timestamp(block["timestamp"])
+        metrics.VOTING_ROUND.set(voting_epoch.id)
+        metrics.REWARD_EPOCH.set(reward_epoch.id)
+        lower_block_id, end_block_id = await find_voter_registration_blocks(
+            w, block["number"], reward_epoch
+        )
+        signing_policy = await get_signing_policy_events(
+            w, config, reward_epoch, lower_block_id, end_block_id
+        )
+    metrics.REGISTERED_CURRENT_EPOCH.labels(identity_address=tia).set(1)
+    # --- end passive-mode gate ---
+
     cron_time = time.time()
 
     # wait until next voting epoch
