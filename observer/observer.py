@@ -79,6 +79,33 @@ logging.basicConfig(
 logging.getLogger("web3").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
+# NOTE:(@janezicmatej) the contract registry only returns the current Relay, so
+# SigningPolicyInitialized events emitted by earlier deployments have to be indexed
+# from hardcoded addresses (source: flare-smart-contracts-v2 deployment/deploys);
+# the current Relay may be listed ahead of a redeploy, callers subtract the addresses
+# they already index so its events aren't read twice
+LEGACY_RELAY_ADDRESSES = {
+    to_checksum_address(a)
+    for a in [
+        # coston
+        "0x92a6E1127262106611e1e129BB64B6D8654273F7",
+        "0xEcD0B60Ea5E01e4D0bFd621c8920B40A32389b83",
+        # coston2
+        "0x97702e350CaEda540935d92aAf213307e9069784",
+        "0x5017728F117501A24EF9C3756C07f0d564598596",
+        # flare
+        "0xea077600E3065F4FAd7161a6D0977741f2618eec",
+        "0x57a4c3676d08Aa5d15410b5A6A80fBcEF72f3F45",
+        "0xCcF30790A93F15e24EB909548a2C58a9b0a7FBd4",
+        "0x5A2Eb0cdB4Aa8253924a488A77EdfD24Bb64407f",
+        # songbird
+        "0xbA35e39D01A3f5710d1e43FC61dbb738B68641c4",
+        "0x67a916E175a2aF01369294739AA60dDdE1Fad189",
+        "0xCB86E8Be709001e01897Bf59847406853da8f14b",
+        "0xc1BC89b717Af42AE27497C9FFb996002D3AC5031",
+    ]
+}
+
 
 def node_id_to_representation(node_id):
     decoded = bytes.fromhex(node_id)
@@ -312,16 +339,9 @@ async def get_signing_policy_events(
     _relay_patch_sps = await get_logs_chunked(
         w,
         {
-            "address": [
-                to_checksum_address("0x92a6E1127262106611e1e129BB64B6D8654273F7"),
-                to_checksum_address("0x97702e350CaEda540935d92aAf213307e9069784"),
-                to_checksum_address("0x57a4c3676d08Aa5d15410b5A6A80fBcEF72f3F45"),
-                to_checksum_address("0x67a916E175a2aF01369294739AA60dDdE1Fad189"),
-                to_checksum_address("0x5A2Eb0cdB4Aa8253924a488A77EdfD24Bb64407f"),
-                to_checksum_address("0xc1BC89b717Af42AE27497C9FFb996002D3AC5031"),
-                to_checksum_address("0xEcD0B60Ea5E01e4D0bFd621c8920B40A32389b83"),
-                to_checksum_address("0x5017728F117501A24EF9C3756C07f0d564598596"),
-            ],
+            "address": list(
+                LEGACY_RELAY_ADDRESSES - {contract.address for contract in contracts}
+            ),
             "topics": [
                 "0x"
                 + config.contracts.Relay.events["SigningPolicyInitialized"].signature
@@ -838,20 +858,10 @@ async def observer_loop(config: Configuration) -> None:
             )
             _relay_patch_sps = await w.eth.get_logs(
                 {
-                    "address": [
-                        to_checksum_address(
-                            "0x92a6E1127262106611e1e129BB64B6D8654273F7"
-                        ),
-                        to_checksum_address(
-                            "0x97702e350CaEda540935d92aAf213307e9069784"
-                        ),
-                        to_checksum_address(
-                            "0x57a4c3676d08Aa5d15410b5A6A80fBcEF72f3F45"
-                        ),
-                        to_checksum_address(
-                            "0x67a916E175a2aF01369294739AA60dDdE1Fad189"
-                        ),
-                    ],
+                    "address": list(
+                        LEGACY_RELAY_ADDRESSES
+                        - {contract.address for contract in contracts}
+                    ),
                     "fromBlock": block,
                     "toBlock": block,
                     "topics": [
