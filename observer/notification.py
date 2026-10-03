@@ -29,13 +29,25 @@ def notify(
         pass
 
 
+# 2026-05-13: Discord groups consecutive webhook messages from the same
+# author into a single continuous bubble. When 5 alerts fire in 30s, the
+# bodies blur together. Prepend a visible ASCII divider so the
+# `[LEVEL] network:X round:Y` header of each alert is clearly delineated
+# from the previous alert's body.
+_DISCORD_ALERT_DIVIDER = "═══════════════════════════════════════"
+
+
 def notify_discord(config: NotificationDiscord, message: Message) -> None:
     for u in config.webhook_url:
+        content = (
+            f"{_DISCORD_ALERT_DIVIDER}\n"
+            f"{message.build_str(with_log=True)}"
+        )
         notify(
             u,
             "POST",
             headers={"Content-Type": "application/json"},
-            json={"content": message.build_str(with_log=True)},
+            json={"content": content},
         )
 
 

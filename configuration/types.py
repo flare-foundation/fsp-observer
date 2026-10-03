@@ -295,6 +295,7 @@ class Configuration:
     epoch: Epoch
     notification: Notification
     fee_threshold: int
+    block_production_lookback: int
     metrics: MetricsConfig
     log_level: str
     max_block_range: int
