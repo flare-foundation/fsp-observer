@@ -188,6 +188,11 @@ class FtsoVotingRoundProtocol(
 
             votes_to_consider.append((entity, submit_1, submit_2))
 
+        # nothing matched commit to reveal this round (e.g. a chain halt), so there is
+        # no median and no way to tell how many feeds the round had
+        if not number_of_feeds:
+            return
+
         nr_feed = max(number_of_feeds.items(), key=lambda x: x[1])[0]
 
         for i in range(nr_feed):

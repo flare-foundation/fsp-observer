@@ -167,55 +167,59 @@ def check_submit_2(
         if len(values) < len(medians):
             values = list(values) + [None] * (len(medians) - len(values))
 
-        if len(values) != len(medians):
-            issues.append(
-                mb.build(
-                    MessageLevel.WARNING,
-                    (
-                        f"submit2 had values for {len(values)} feeds, "
-                        f"expected {len(medians)}"
-                    ),
-                )
-            )
-
-        else:
-            none_indices = []
-            minimal_condition_indices = []
-
-            for i, (v, m) in enumerate(zip(values, medians, strict=False)):
-                if v is None:
-                    none_indices.append(str(i))
-                    continue
-
-                # no consensus median for this feed, nothing to compare against
-                if m is None:
-                    continue
-
-                # as per https://proposals.flare.network/FIP/FIP_10.html
-                mcb_low = m.value * 0.995
-                mcb_high = m.value * 1.005
-
-                if not (mcb_low <= v <= mcb_high):
-                    minimal_condition_indices.append(str(i))
-
-            if none_indices and not config.suppress_ftso_missing_feed:
-                ind = ", ".join(none_indices)
+        # a round can have no medians (nothing matched commit to reveal), and then
+        # neither the values nor their count can be checked
+        if medians:
+            if len(values) != len(medians):
                 issues.append(
                     mb.build(
                         MessageLevel.WARNING,
-                        f"submit2 had 'None' on indices {ind}",
+                        (
+                            f"submit2 had values for {len(values)} feeds, "
+                            f"expected {len(medians)}"
+                        ),
                     )
                 )
 
-            # TODO:(matej) change this to a sampling array instead
-            # if minimal_condition_indices:
-            #     ind = ", ".join(minimal_condition_indices)
-            #     issues.append(
-            #         mb.build(
-            #             MessageLevel.WARNING,
-            #             f"submit2 values missed minimal conditions on indices {ind}",
-            #         )
-            #     )
+            else:
+                none_indices = []
+                minimal_condition_indices = []
+
+                for i, (v, m) in enumerate(zip(values, medians, strict=False)):
+                    if v is None:
+                        none_indices.append(str(i))
+                        continue
+
+                    # no consensus median for this feed, nothing to compare against
+                    if m is None:
+                        continue
+
+                    # as per https://proposals.flare.network/FIP/FIP_10.html
+                    mcb_low = m.value * 0.995
+                    mcb_high = m.value * 1.005
+
+                    if not (mcb_low <= v <= mcb_high):
+                        minimal_condition_indices.append(str(i))
+
+                if none_indices and not config.suppress_ftso_missing_feed:
+                    ind = ", ".join(none_indices)
+                    issues.append(
+                        mb.build(
+                            MessageLevel.WARNING,
+                            f"submit2 had 'None' on indices {ind}",
+                        )
+                    )
+
+                # TODO:(matej) change this to a sampling array instead
+                # if minimal_condition_indices:
+                #     ind = ", ".join(minimal_condition_indices)
+                #     issues.append(
+                #         mb.build(
+                #             MessageLevel.WARNING,
+                #             "submit2 values missed minimal conditions"
+                #             f" on indices {ind}",
+                #         )
+                #     )
 
         if early or late:
             issues.append(mb.build(level, message))
