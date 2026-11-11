@@ -196,12 +196,29 @@ async def get_block_production(w: AsyncWeb3) -> float:
     latest_block = await w.eth.get_block("latest")
     assert "timestamp" in latest_block
     assert "number" in latest_block
-    to_compare = min(1_000_000, int(latest_block["number"]) - 1)
-    comparison_block = await w.eth.get_block(int(latest_block["number"]) - to_compare)
-    assert "timestamp" in comparison_block
-    time_delta = latest_block["timestamp"] - comparison_block["timestamp"]
-    block_production = time_delta / to_compare
-    return block_production
+
+    # a day or two of blocks averages out to the same rate as a longer sample does,
+    # and a node that keeps only recent history still has it; shrink the sample until
+    # it starts at a block the node serves
+    to_compare = min(100_000, int(latest_block["number"]) - 1)
+    while to_compare > 0:
+        try:
+            comparison_block = await w.eth.get_block(
+                int(latest_block["number"]) - to_compare
+            )
+        except BlockNotFound:
+            LOGGER.debug(
+                f"Block production sample of {to_compare} blocks is not on the node,"
+                " shrinking it"
+            )
+            to_compare //= 10
+            continue
+
+        assert "timestamp" in comparison_block
+        time_delta = latest_block["timestamp"] - comparison_block["timestamp"]
+        return time_delta / to_compare
+
+    raise RuntimeError("cannot measure block production, the node has no block history")
 
 
 def calculate_maximum_exponent(block_production: float, config: Configuration) -> int:
