@@ -401,6 +401,14 @@ async def get_signing_policy_events(
                 e = RandomAcquisitionStarted.from_dict(data["args"])
             case x:
                 raise ValueError(f"Unexpected event {x}")
+
+        # the block range can span a neighbouring epoch's initialization window (a
+        # chain halt delays initialization, and the range is widened to find it), so
+        # events for other epochs are skipped: adding them would trip the builder's
+        # single event assertions or break the scan on the wrong signing policy
+        if e.reward_epoch_id != reward_epoch.id:
+            continue
+
         builder.add(e)
 
         # signing policy initialized is the last event that gets emitted
@@ -408,6 +416,44 @@ async def get_signing_policy_events(
             break
 
     return builder.build()
+
+
+async def load_signing_policy(
+    w: AsyncWeb3,
+    config: Configuration,
+    reward_epoch: RewardEpoch,
+    start_block_id: int,
+    end_block_id: int,
+) -> SigningPolicy:
+    # the initial block range is derived from the epoch's nominal timestamps, but a
+    # chain halt delays the initialization transactions, so the events can land in
+    # blocks after it (the epoch itself then also starts late). try the given range
+    # first, as it is the cheap case, then widen the end to the chain tip, and wait
+    # for the events if the policy isn't on chain yet
+    while True:
+        try:
+            return await get_signing_policy_events(
+                w, config, reward_epoch, start_block_id, end_block_id
+            )
+        except AssertionError as e:
+            # the builder asserts on an incomplete policy; logged because this also
+            # catches assertions that are not about a missing event
+            LOGGER.debug(
+                f"No complete signing policy for reward epoch {reward_epoch.id} in"
+                f" blocks [{start_block_id}, {end_block_id}]: {e!r}"
+            )
+
+        block = await w.eth.get_block("latest")
+        assert "number" in block
+        while block["number"] <= end_block_id:
+            LOGGER.info(
+                f"Signing policy for reward epoch {reward_epoch.id}"
+                " not initialized yet, retrying in 60s"
+            )
+            await asyncio.sleep(60)
+            block = await w.eth.get_block("latest")
+            assert "number" in block
+        end_block_id = block["number"]
 
 
 def log_message(config: Configuration, message: Message):
@@ -465,28 +511,18 @@ async def wait_until_registered(
             metrics.REWARD_EPOCH.set(ref.from_timestamp(int(time.time())).id)
             await asyncio.sleep(min(remaining, 3600))
 
-        # with the window open, rescan until the signing policy for next_epoch is
+        # with the window open, scan until the signing policy for next_epoch is
         # initialized; it lands before the epoch starts unless the epoch is
         # extended
-        while True:
-            block = await w.eth.get_block("latest")
-            assert "number" in block
-            assert "timestamp" in block
-            target_start_ts = window_open_ts - REGISTRATION_SCAN_BUFFER_S
-            lower_block_id = await find_block_at_timestamp(
-                w, block["number"], target_start_ts
-            )
-            try:
-                signing_policy = await get_signing_policy_events(
-                    w, config, next_epoch, lower_block_id, block["number"]
-                )
-                break
-            except AssertionError:
-                LOGGER.info(
-                    f"Signing policy for reward epoch {next_epoch.id}"
-                    " not initialized yet, retrying in 60s"
-                )
-                await asyncio.sleep(60)
+        block = await w.eth.get_block("latest")
+        assert "number" in block
+        target_start_ts = window_open_ts - REGISTRATION_SCAN_BUFFER_S
+        lower_block_id = await find_block_at_timestamp(
+            w, block["number"], target_start_ts
+        )
+        signing_policy = await load_signing_policy(
+            w, config, next_epoch, lower_block_id, block["number"]
+        )
 
         nb_entities = len(signing_policy.entity_mapper.by_identity_address)
         LOGGER.info(
@@ -600,6 +636,12 @@ async def observer_loop(config: Configuration) -> None:
         f" | voting_epoch={voting_epoch.id}"
     )
 
+    # started before the signing policy is loaded: that can wait for a late
+    # initialization or for a registration window, and the observer stays observable
+    # (and alive, as far as a liveness probe on this port is concerned) while it does
+    if config.metrics.enabled:
+        metrics.start_metrics_server(config.metrics.port, config.metrics.address)
+
     # block production rate differs per chain, so measure it and reuse it both to
     # locate the registration blocks and to size the fast updates exponent window
     block_production = await get_block_production(w)
@@ -619,7 +661,7 @@ async def observer_loop(config: Configuration) -> None:
     )
 
     # get informations for events that build the current signing policy
-    signing_policy = await get_signing_policy_events(
+    signing_policy = await load_signing_policy(
         w,
         config,
         reward_epoch,
@@ -632,10 +674,6 @@ async def observer_loop(config: Configuration) -> None:
         f" | entities={nb_entities}"
         f" | starts_at_round={signing_policy.start_voting_round}"
     )
-    # started before the potential registration wait below so the observer stays
-    # observable while it waits
-    if config.metrics.enabled:
-        metrics.start_metrics_server(config.metrics.port, config.metrics.address)
 
     if tia not in signing_policy.entity_mapper.by_identity_address:
         LOGGER.warning(f"Entity {tia} NOT found in current signing policy!")
