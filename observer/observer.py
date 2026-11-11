@@ -216,37 +216,37 @@ def calculate_maximum_exponent(block_production: float, config: Configuration) -
 # acquisition, then voter registration, then the signing policy event all land in that
 # window, independent of the reward epoch length (3.5d on mainnets, 6h on testnets)
 SIGNING_POLICY_INITIALIZATION_S = 2 * 60 * 60
-# scan a bit wider on both ends so boundary events aren't clipped by block estimation
+# scan a bit wider on both ends so boundary events aren't clipped
 REGISTRATION_SCAN_BUFFER_S = 30 * 60
 
 
 async def find_block_at_timestamp(
     w: AsyncWeb3,
     from_block_id: int,
-    from_ts: int,
     target_ts: int,
-    block_production: float,
 ) -> int:
-    # walk back from a known (block, ts) pair using the chain's block production rate
-    # to estimate the block at target_ts, then refine until within tolerance; using the
-    # measured rate (instead of assuming 1s/block) keeps this accurate on every chain
-    block_id = from_block_id - int((from_ts - target_ts) / block_production)
-    block = await w.eth.get_block(block_id)
-    assert "timestamp" in block
-    d = block["timestamp"] - target_ts
-    while abs(d) > 600:
-        block_id -= int(d / block_production) or (1 if d > 0 else -1)
-        block = await w.eth.get_block(block_id)
+    # the last block at or before target_ts, bisected over [0, from_block_id]; block
+    # timestamps are strictly increasing, so this always terminates in O(log n) calls.
+    # refining an estimate from the chain's block production rate until it lands within
+    # a tolerance of target_ts does not: if the chain halts for longer than the
+    # tolerance around target_ts, no such block exists and the refinement spins forever
+    # between the blocks on either side of the gap
+    lo, hi = 0, from_block_id
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        block = await w.eth.get_block(mid)
         assert "timestamp" in block
-        d = block["timestamp"] - target_ts
-    return block_id
+        if block["timestamp"] <= target_ts:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
 
 
 async def find_voter_registration_blocks(
     w: AsyncWeb3,
     current_block_id: int,
     reward_epoch: RewardEpoch,
-    block_production: float,
 ) -> tuple[int, int]:
     current_ts = int(time.time())
 
@@ -260,12 +260,8 @@ async def find_voter_registration_blocks(
     # the epoch we observe has already started, so cap the end at the current block
     target_end_ts = min(reward_epoch.start_s + REGISTRATION_SCAN_BUFFER_S, current_ts)
 
-    start_block_id = await find_block_at_timestamp(
-        w, current_block_id, current_ts, target_start_ts, block_production
-    )
-    end_block_id = await find_block_at_timestamp(
-        w, current_block_id, current_ts, target_end_ts, block_production
-    )
+    start_block_id = await find_block_at_timestamp(w, current_block_id, target_start_ts)
+    end_block_id = await find_block_at_timestamp(w, current_block_id, target_end_ts)
 
     return (start_block_id, end_block_id)
 
@@ -434,7 +430,6 @@ async def wait_until_registered(
     config: Configuration,
     tia: ChecksumAddress,
     signing_policy: SigningPolicy,
-    block_production: float,
 ) -> SigningPolicy:
     # the observer can only follow an entity that is part of the active signing
     # policy; while it isn't, wait for upcoming registration windows and rescan
@@ -479,11 +474,7 @@ async def wait_until_registered(
             assert "timestamp" in block
             target_start_ts = window_open_ts - REGISTRATION_SCAN_BUFFER_S
             lower_block_id = await find_block_at_timestamp(
-                w,
-                block["number"],
-                block["timestamp"],
-                target_start_ts,
-                block_production,
+                w, block["number"], target_start_ts
             )
             try:
                 signing_policy = await get_signing_policy_events(
@@ -624,7 +615,7 @@ async def observer_loop(config: Configuration) -> None:
     # the signing policy is initialized in the 2h before the reward epoch; find the
     # block range spanning that window to read the events that build it
     lower_block_id, end_block_id = await find_voter_registration_blocks(
-        w, block["number"], reward_epoch, block_production
+        w, block["number"], reward_epoch
     )
 
     # get informations for events that build the current signing policy
@@ -648,9 +639,7 @@ async def observer_loop(config: Configuration) -> None:
 
     if tia not in signing_policy.entity_mapper.by_identity_address:
         LOGGER.warning(f"Entity {tia} NOT found in current signing policy!")
-        signing_policy = await wait_until_registered(
-            w, config, tia, signing_policy, block_production
-        )
+        signing_policy = await wait_until_registered(w, config, tia, signing_policy)
         reward_epoch = signing_policy.reward_epoch
 
         # the wait can span multiple reward epochs, refresh chain related state
