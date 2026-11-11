@@ -14,7 +14,6 @@ from eth_account._utils.signing import to_standard_v
 from eth_account.messages import _hash_eip191_message, encode_defunct
 from eth_keys.datatypes import Signature as EthSignature
 from eth_typing import ChecksumAddress
-from eth_utils.address import to_checksum_address
 from py_flare_common.b58 import flare_b58_encode_check
 from py_flare_common.fsp.epoch.epoch import RewardEpoch
 from py_flare_common.fsp.messaging import (
@@ -360,34 +359,6 @@ async def get_signing_policy_events(
         end_block,
         config.max_block_range,
     )
-
-    # NOTE:(@janezicmatej) VoterRegistry and FlareSystemsCalculator were redeployed on
-    # flare and songbird on 2026-07-17; the contract registry only returns the new
-    # addresses, so registrations emitted by the legacy deployments have to be indexed
-    # in addition (abis for both variants are already loaded, see Contracts)
-    _legacy_registration_logs = await get_logs_chunked(
-        w,
-        {
-            "address": [
-                # flare: legacy VoterRegistry
-                to_checksum_address("0x2580101692366e2f331e891180d9ffdF861Fce83"),
-                # flare: legacy FlareSystemsCalculator
-                to_checksum_address("0x67c4B11c710D35a279A41cff5eb089Fe72748CF8"),
-                # songbird: legacy VoterRegistry
-                to_checksum_address("0x31B9EC65C731c7D973a33Ef3FC83B653f540dC8D"),
-                # songbird: legacy FlareSystemsCalculator
-                to_checksum_address("0x126FAeEc75601dA3354c0b5Cc0b60C85fCbC3A5e"),
-            ],
-        },
-        start_block,
-        end_block,
-        config.max_block_range,
-    )
-    block_logs.extend(_legacy_registration_logs)
-
-    # the legacy logs come from a separate query and get appended out of order; restore
-    # chain order so the SigningPolicyInitialized early-break below doesn't skip them
-    block_logs.sort(key=lambda log: (log["blockNumber"], log["logIndex"]))
 
     for log in block_logs:
         sig = log["topics"][0]
