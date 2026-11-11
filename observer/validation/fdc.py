@@ -267,9 +267,11 @@ def check_submit_signatures(
         s = Signature.from_parsed_signature(
             submit_signatures.parsed_payload.payload.signature
         )
-        if not s.signs_finalization(
-            finalization, config.chain_id, entity.signing_policy_address
-        ):
+        addr = s.recover_public_key_from_msg_hash(
+            finalization.to_signed_hash(config.chain_id)
+        ).to_checksum_address()
+
+        if addr != entity.signing_policy_address:
             metrics.SIGNATURE_MISMATCH.labels(
                 identity_address=metrics.identity_address, protocol="fdc"
             ).inc()
