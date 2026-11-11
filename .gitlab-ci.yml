@@ -4,7 +4,9 @@ variables:
 
 .test_template: &test
   stage: test
-  image: ghcr.io/astral-sh/uv:python3.13-trixie-slim
+  # same python as the runtime image, so uv uses it instead of downloading the
+  # newest interpreter that satisfies requires-python
+  image: ghcr.io/astral-sh/uv:python3.14-trixie-slim
   cache:
     key:
       files:
